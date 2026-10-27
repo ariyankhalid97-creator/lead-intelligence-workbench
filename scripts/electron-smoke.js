@@ -46,6 +46,36 @@ const path = require("path");
         document.querySelectorAll("#connectionCards .connection-card")
           .length === 5,
     );
+    await page.locator('nav a[href="#sources"]').click();
+    await page.waitForFunction(() => location.hash === "#sources");
+    await page.waitForFunction(
+      () => document.querySelectorAll("#sourceCards .source-card").length === 12,
+    );
+    assert.strictEqual(
+      await page.locator("#sourceCards .source-card").count(),
+      12,
+    );
+    assert.strictEqual(
+      await page.locator("#connectionsPanel").getAttribute("open"),
+      null,
+    );
+    assert.strictEqual(
+      await page.evaluate(() => {
+        const sources = document
+          .querySelector("#sourceCards")
+          .getBoundingClientRect();
+        const connections = document
+          .querySelector("#connectionsPanel")
+          .getBoundingClientRect();
+        return sources.top < connections.top;
+      }),
+      true,
+    );
+    await page.locator("#connectionsPanel > summary").click();
+    assert.strictEqual(
+      await page.locator("#connectionsPanel").getAttribute("open"),
+      "",
+    );
     assert.strictEqual(
       await page
         .locator("#connectionCards")

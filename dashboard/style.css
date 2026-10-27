@@ -146,11 +146,43 @@ select,
   margin-top: var(--s5);
 }
 .connections-panel {
-  margin: 0 0 var(--s5);
+  padding: 0;
+  margin: var(--s5) 0;
+  overflow: hidden;
+}
+#sourceCards {
+  margin-bottom: var(--s5);
+}
+.connections-panel > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s4);
+  padding: var(--s4) var(--s5);
+  cursor: pointer;
+  list-style: none;
+}
+.connections-panel > summary::-webkit-details-marker {
+  display: none;
+}
+.connections-panel > summary > span:first-child {
+  display: grid;
+  gap: 2px;
+}
+.connections-panel > summary small {
+  color: var(--muted);
+  font-weight: 400;
+}
+.connections-panel[open] > summary {
+  border-bottom: var(--line) solid var(--border);
+  background: color-mix(in srgb, var(--surface) 92%, var(--accent) 8%);
+}
+.connections-panel-body {
+  padding: var(--s5);
 }
 .connection-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(290px, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: var(--s4);
 }
 .connection-card {
@@ -195,6 +227,16 @@ select,
 }
 .phase-two-geography {
   align-items: end;
+}
+@media (max-width: 1120px) {
+  .connection-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (max-width: 760px) {
+  .connection-grid {
+    grid-template-columns: 1fr;
+  }
 }
 .maintenance-actions {
   display: flex;

@@ -109,6 +109,9 @@ async function loadConnections() {
       api("/api/connections"),
       api("/api/connections/catalog"),
     ]);
+    const connected = data.providers.filter((item) => item.connected).length;
+    $("connectionSummary").textContent =
+      `${connected} of ${data.providers.length} connected`;
     $("connectionCards").innerHTML = data.providers
       .map(connectionCard)
       .join("");

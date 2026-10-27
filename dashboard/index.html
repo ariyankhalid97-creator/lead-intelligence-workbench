@@ -520,28 +520,27 @@ Dallas, Texas</textarea>
             </p>
           </div>
         </div>
-        <section
-          class="card connections-panel"
-          aria-labelledby="connectionsHeading"
-        >
-          <div class="card-title">
-            <span class="step">02</span>
-            <div>
-              <h2 id="connectionsHeading">Connections &amp; API credentials</h2>
-              <p>
-                Optional paid or account-based providers stay off until you
-                connect, test, and enable them.
-              </p>
-            </div>
-          </div>
-          <div id="connectionCards" class="connection-grid"></div>
-          <p id="connectionStatus" class="fine-print" role="status"></p>
-          <details class="source-catalog-details">
-            <summary><b>Phase 2 country source catalog</b></summary>
-            <div id="sourceCatalog" class="source-grid"></div>
-          </details>
-        </section>
         <div id="sourceCards" class="source-grid"></div>
+        <details id="connectionsPanel" class="card connections-panel">
+          <summary>
+            <span>
+              <b id="connectionsHeading">Connections &amp; API keys</b>
+              <small
+                >Optional providers stay off until you connect, test, and enable
+                them.</small
+              >
+            </span>
+            <span id="connectionSummary" class="badge">0 connected</span>
+          </summary>
+          <div class="connections-panel-body">
+            <div id="connectionCards" class="connection-grid"></div>
+            <p id="connectionStatus" class="fine-print" role="status"></p>
+            <details class="source-catalog-details">
+              <summary><b>Phase 2 country source catalog</b></summary>
+              <div id="sourceCatalog" class="source-grid"></div>
+            </details>
+          </div>
+        </details>
         <section
           id="maintenanceCard"
           class="card maintenance-card"

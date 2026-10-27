@@ -1,5 +1,18 @@
 # Changelog
 
+## 2.4.1 — 2026-10-27
+
+### Data sources layout
+
+- Restore immediate visibility of every data-source card by placing the source grid before optional account connections.
+- Replace the oversized always-open credentials area with a compact, collapsed Connections & API keys drawer and connected-provider count.
+- Add an Electron regression check for source-card count, ordering and drawer behavior.
+
+### Apify catalog review
+
+- Document a safe use of `cporter202/google-maps-scraping-apis` as an actor-discovery catalog rather than executable scraper code.
+- Require live official actor schema/pricing validation, explicit cost confirmation, spend bounds, normalized output and provenance before future paid actor execution.
+
 ## 2.4.0 — 2026-10-27
 
 ### Phase 2 foundation

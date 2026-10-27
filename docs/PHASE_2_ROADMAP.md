@@ -10,6 +10,8 @@
 
 The remaining country registry adapters, exact cross-directory comparison, and approved LinkedIn automation are staged below.
 
+The optional Apify actor path has been reviewed separately in [APIFY_ACTOR_CATALOG_REVIEW.md](APIFY_ACTOR_CATALOG_REVIEW.md). It uses the external repository as a discovery catalog only; live official schemas, pricing, explicit spend confirmation and per-actor normalization are mandatory before any paid run.
+
 This phase should extend the evidence waterfall without turning every directory page into a trusted lead. Google Maps remains a discovery seed. Registry and directory results are comparison evidence until an exact domain, phone, registration identifier, or name-and-address match connects them to the same entity.
 
 ## 1. Source registry and saved directory memory
