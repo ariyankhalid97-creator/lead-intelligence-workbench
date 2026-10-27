@@ -76,6 +76,17 @@
           </svg>
           <span>Data sources</span>
         </a>
+        <a
+          href="#registries"
+          aria-label="Business registries"
+          title="Business registries"
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M4 20h16M6 20V9h12v11M9 12h2m2 0h2m-6 4h2m2 0h2" />
+            <path d="m5 9 7-5 7 5" />
+          </svg>
+          <span>Business registries</span>
+        </a>
       </nav>
       <button id="navNewCampaign" class="nav-cta" type="button">
         <span>New campaign</span><b>+</b>
@@ -598,6 +609,53 @@ Dallas, Texas</textarea>
           >
         </div>
       </section>
+      <section id="registriesView" class="view hidden">
+        <div class="hero compact-hero">
+          <span class="eyebrow">OFFICIAL DIRECTORY RESEARCH</span>
+          <h1>Search reviewed business registries.</h1>
+          <p>
+            Find the correct official directory by country and niche. Free,
+            registration-required and paid sources remain clearly separated.
+          </p>
+        </div>
+        <section
+          class="card registry-search-panel"
+          aria-labelledby="registryHeading"
+        >
+          <div class="card-title">
+            <span class="step">01</span>
+            <div>
+              <h2 id="registryHeading">Directory finder</h2>
+              <p>
+                Filter official registries before opening their approved search
+                route.
+              </p>
+            </div>
+          </div>
+          <div class="registry-filters">
+            <label for="registryCountry"
+              >Country<select id="registryCountry">
+                <option value="">All supported countries</option>
+              </select></label
+            >
+            <label for="registryNiche"
+              >Niche<select id="registryNiche">
+                <option value="">All niches</option>
+              </select></label
+            >
+            <label for="registryQuery"
+              >Directory or capability<input
+                id="registryQuery"
+                placeholder="healthcare, contractor, company…"
+            /></label>
+            <button id="registrySearch" class="primary" type="button">
+              Find directories
+            </button>
+          </div>
+          <p id="registryNotice" class="fine-print" role="status"></p>
+        </section>
+        <div id="registryCards" class="source-grid"></div>
+      </section>
       <section id="libraryView" class="view hidden">
         <div class="page-heading">
           <div>
@@ -697,6 +755,15 @@ Dallas, Texas</textarea>
                   <label for="nichePackSignals"
                     >Opportunity signals · one per line</label
                   ><textarea id="nichePackSignals" rows="3"></textarea>
+                  <label for="nichePackMethods"
+                    >Research methods · one per line</label
+                  ><textarea id="nichePackMethods" rows="4"></textarea>
+                  <label for="nichePackTechnologies"
+                    >Technology signals to verify · one per line</label
+                  ><textarea id="nichePackTechnologies" rows="4"></textarea>
+                  <label for="nichePackReviewSignals"
+                    >Review-monitoring signals · one per line</label
+                  ><textarea id="nichePackReviewSignals" rows="3"></textarea>
                   <button class="secondary" type="submit">
                     Save niche pack
                   </button>

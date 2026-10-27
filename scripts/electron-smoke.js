@@ -49,7 +49,8 @@ const path = require("path");
     await page.locator('nav a[href="#sources"]').click();
     await page.waitForFunction(() => location.hash === "#sources");
     await page.waitForFunction(
-      () => document.querySelectorAll("#sourceCards .source-card").length === 12,
+      () =>
+        document.querySelectorAll("#sourceCards .source-card").length === 12,
     );
     assert.strictEqual(
       await page.locator("#sourceCards .source-card").count(),
@@ -75,6 +76,13 @@ const path = require("path");
     assert.strictEqual(
       await page.locator("#connectionsPanel").getAttribute("open"),
       "",
+    );
+    await page.locator('nav a[href="#registries"]').click();
+    await page.waitForFunction(() => location.hash === "#registries");
+    await page.waitForFunction(
+      () =>
+        document.querySelectorAll("#registryCards .registry-card").length ===
+        11,
     );
     assert.strictEqual(
       await page

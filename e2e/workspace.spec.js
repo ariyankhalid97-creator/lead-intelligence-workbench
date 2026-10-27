@@ -37,6 +37,14 @@ test("discovery, history, sources and accessibility at desktop/mobile", async ({
   await expect(
     page.getByRole("heading", { name: "Google Maps · Chrome" }),
   ).toBeVisible();
+  await page.getByRole("link", { name: /Business registries/ }).click();
+  await expect(
+    page.getByRole("heading", { name: "Search reviewed business registries." }),
+  ).toBeVisible();
+  await expect(page.locator("#registryCards .registry-card")).toHaveCount(11);
+  await page.locator("#registryCountry").selectOption("Australia");
+  await page.getByRole("button", { name: "Find directories" }).click();
+  await expect(page.locator("#registryCards .registry-card")).toHaveCount(3);
   const scan = await new AxeBuilder({ page })
     .withTags(["wcag2a", "wcag2aa"])
     .analyze();
@@ -429,11 +437,17 @@ test("historical library prepares a separate recheck without starting it", async
   });
   await page.goto("/#library");
   await expect(
-    page.getByRole("heading", { name: "Finished research, compiled and organized." }),
+    page.getByRole("heading", {
+      name: "Finished research, compiled and organized.",
+    }),
   ).toBeVisible();
-  await expect(page.locator("#librarySummary")).toContainText("44 historical references");
+  await expect(page.locator("#librarySummary")).toContainText(
+    "44 historical references",
+  );
   await page
-    .getByLabel("Search research collections and historical prospects", { exact: true })
+    .getByLabel("Search research collections and historical prospects", {
+      exact: true,
+    })
     .fill("Peak Kitchen");
   await page.locator(`[data-id="${peak.id}"]`).check();
   const scan = await new AxeBuilder({ page })
@@ -452,7 +466,9 @@ test("historical library prepares a separate recheck without starting it", async
   expect(starts).toBe(0);
   await page.getByRole("link", { name: /Your research library/ }).click();
   await page
-    .getByLabel("Search research collections and historical prospects", { exact: true })
+    .getByLabel("Search research collections and historical prospects", {
+      exact: true,
+    })
     .fill("");
   await page.setViewportSize({ width: 1440, height: 950 });
   expect(
@@ -472,7 +488,9 @@ test("historical library prepares a separate recheck without starting it", async
   ).toBeTruthy();
 });
 
-test("compiled research stays grouped, opens full details and feeds outreach", async ({ page }) => {
+test("compiled research stays grouped, opens full details and feeds outreach", async ({
+  page,
+}) => {
   const row = {
     name: "Organized Roofing Co",
     address: "1 Main St, Dallas, TX",
@@ -486,12 +504,40 @@ test("compiled research stays grouped, opens full details and feeds outreach", a
     entity_id: "company-fixture",
     contact_confidence: 90,
     next_best_action: "ready_for_outreach",
-    next_action_reason: "Verified evidence and a recommended contact are available.",
+    next_action_reason:
+      "Verified evidence and a recommended contact are available.",
     match_status: "service_match",
     operator_type: "independent_operator",
-    email_quality: JSON.stringify({ recommended: [{ email: "owner@organized.test", type: "named_or_role_contact", basis: "published", recommended: true }], excluded: [] }),
-    duplicate_summary: JSON.stringify([{ name: "Organized Roofing", source: "web discovery", source_url: "https://organized.test/about", reason: "same website" }]),
-    verification: JSON.stringify({ status: "complete", checked_at: "2026-10-23", website: { status: "reachable" }, socials: { linkedin: { url: "https://linkedin.com/company/organized" } }, ads: { status: "not_verified", tracking_signals: [] }, reviews: { google_maps: { rating: "4.8", review_count: 42 }, other_sources: [] } }),
+    email_quality: JSON.stringify({
+      recommended: [
+        {
+          email: "owner@organized.test",
+          type: "named_or_role_contact",
+          basis: "published",
+          recommended: true,
+        },
+      ],
+      excluded: [],
+    }),
+    duplicate_summary: JSON.stringify([
+      {
+        name: "Organized Roofing",
+        source: "web discovery",
+        source_url: "https://organized.test/about",
+        reason: "same website",
+      },
+    ]),
+    verification: JSON.stringify({
+      status: "complete",
+      checked_at: "2026-10-23",
+      website: { status: "reachable" },
+      socials: { linkedin: { url: "https://linkedin.com/company/organized" } },
+      ads: { status: "not_verified", tracking_signals: [] },
+      reviews: {
+        google_maps: { rating: "4.8", review_count: 42 },
+        other_sources: [],
+      },
+    }),
   };
   const collection = {
     id: "compiled-fixture",
@@ -502,32 +548,102 @@ test("compiled research stays grouped, opens full details and feeds outreach", a
     created_at: "2026-10-23T10:00:00+05:00",
     record_count: 1,
     rows: [row],
-    organization: { duplicates_consolidated: 1, recommended_email_records: 1, ai_status: "complete" },
+    organization: {
+      duplicates_consolidated: 1,
+      recommended_email_records: 1,
+      ai_status: "complete",
+    },
   };
   await page.route("**/api/library", (route) =>
-    route.fulfill({ json: { collections: [collection], compiled_record_count: 1, records: [], record_count: 0, source_row_count: 0 } }),
+    route.fulfill({
+      json: {
+        collections: [collection],
+        compiled_record_count: 1,
+        records: [],
+        record_count: 0,
+        source_row_count: 0,
+      },
+    }),
   );
   await page.route("**/api/intelligence/overview", (route) =>
-    route.fulfill({ json: { companies: 1, contacts: 1, evidence_claims: 1, changes_detected: 0, open_actions: { ready_for_outreach: 1 }, outcomes: {}, niche_packs: 1, experiments: 0, performance: { positive_outcomes: 0 } } }),
+    route.fulfill({
+      json: {
+        companies: 1,
+        contacts: 1,
+        evidence_claims: 1,
+        changes_detected: 0,
+        open_actions: { ready_for_outreach: 1 },
+        outcomes: {},
+        niche_packs: 1,
+        experiments: 0,
+        performance: { positive_outcomes: 0 },
+      },
+    }),
   );
-  await page.route("**/api/intelligence/queue", (route) => route.fulfill({ json: [] }));
+  await page.route("**/api/intelligence/queue", (route) =>
+    route.fulfill({ json: [] }),
+  );
   await page.route("**/api/intelligence/entities/company-fixture", (route) =>
-    route.fulfill({ json: { company: row, first_seen: "2026-10-23T10:00:00Z", last_seen: "2026-10-23T10:00:00Z", locations: [{ address: row.address, city: row.city, source_url: row.source_url, last_seen: "2026-10-23" }], contacts: [{ email: row.email, confidence: 90, status: "observed" }], evidence: [{ field: "email", value: row.email, source_url: row.website, basis: "published", observed_at: "2026-10-23" }], outcomes: [], browser_checkpoints: [] } }),
+    route.fulfill({
+      json: {
+        company: row,
+        first_seen: "2026-10-23T10:00:00Z",
+        last_seen: "2026-10-23T10:00:00Z",
+        locations: [
+          {
+            address: row.address,
+            city: row.city,
+            source_url: row.source_url,
+            last_seen: "2026-10-23",
+          },
+        ],
+        contacts: [{ email: row.email, confidence: 90, status: "observed" }],
+        evidence: [
+          {
+            field: "email",
+            value: row.email,
+            source_url: row.website,
+            basis: "published",
+            observed_at: "2026-10-23",
+          },
+        ],
+        outcomes: [],
+        browser_checkpoints: [],
+      },
+    }),
   );
   await page.route("**/api/jobs/compiled-fixture", (route) =>
-    route.fulfill({ json: { ...collection, status: "complete", params: { niche: "Roofing", location: "Dallas, Texas" } } }),
+    route.fulfill({
+      json: {
+        ...collection,
+        status: "complete",
+        params: { niche: "Roofing", location: "Dallas, Texas" },
+      },
+    }),
   );
   await page.goto("/#library");
   await page.getByText("Roofing · Dallas, Texas", { exact: true }).click();
-  await expect(page.getByText("Organized Roofing Co", { exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "View research details for Organized Roofing Co" }).click();
-  await expect(page.getByRole("dialog")).toContainText("Merged duplicate sources");
+  await expect(
+    page.getByText("Organized Roofing Co", { exact: true }),
+  ).toBeVisible();
+  await page
+    .getByRole("button", {
+      name: "View research details for Organized Roofing Co",
+    })
+    .click();
+  await expect(page.getByRole("dialog")).toContainText(
+    "Merged duplicate sources",
+  );
   await expect(page.getByRole("dialog")).toContainText("Organized Roofing");
-  await expect(page.getByRole("dialog")).toContainText("Connected company history");
+  await expect(page.getByRole("dialog")).toContainText(
+    "Connected company history",
+  );
   await page.getByRole("button", { name: "Close" }).click();
   await page.getByRole("link", { name: /Outreach campaigns/ }).click();
   await page.getByRole("tab", { name: "New campaign" }).click();
-  await expect(page.locator("#campaignJob")).toContainText("Roofing · Dallas, Texas · 1 organized prospects");
+  await expect(page.locator("#campaignJob")).toContainText(
+    "Roofing · Dallas, Texas · 1 organized prospects",
+  );
 });
 
 test("opportunity details separate supported scores, unknowns and published claims", async ({

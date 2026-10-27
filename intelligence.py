@@ -14,6 +14,7 @@ import ai_teaching
 import engine
 import evidence_compiler
 import niche_catalog
+import research_packs
 import sequence_engine
 from contacts import now
 
@@ -118,9 +119,13 @@ def _default_pack(niche):
             "restaurant hood cleaning",
             "commercial hood degreasing",
         ]
+    methods = research_packs.for_niche(name)
+    synonyms = list(
+        dict.fromkeys([*synonyms, *methods.get("vertical_search_terms", [])])
+    )[:12]
     return {
         "name": name,
-        "synonyms": list(dict.fromkeys(synonyms))[:12],
+        "synonyms": synonyms,
         "exclusions": ["jobs", "training", "equipment for sale", "directory only"],
         "decision_maker_roles": [
             "owner",
@@ -168,6 +173,12 @@ def _default_pack(niche):
             "local AI interpretation",
             "manual review",
         ],
+        "search_methods": methods["search_methods"],
+        "review_signals": methods["review_signals"],
+        "technology_signals": methods["technology_signals"],
+        "vertical_profiles": methods["vertical_profiles"],
+        "vertical_search_terms": methods["vertical_search_terms"],
+        "method_source": methods["method_source"],
         "ai_terms": [],
         "ai_avoid": [],
         "ai_notes": "",
@@ -185,15 +196,29 @@ def _seed_niche_catalog():
     stamp = now()
     with engine.connection() as conn:
         existing = {
-            row[0]
+            row[0]: row[1]
             for row in conn.execute(
-                "SELECT slug FROM intelligence_niche_packs"
+                "SELECT slug,payload FROM intelligence_niche_packs"
             ).fetchall()
         }
         for entry in niche_catalog.entries():
             pack = _default_pack(entry["name"])
             slug = _slug(pack["name"])
             if slug in existing:
+                try:
+                    saved = json.loads(existing[slug])
+                except (TypeError, ValueError):
+                    saved = {}
+                changed = False
+                for key, value in pack.items():
+                    if key not in saved:
+                        saved[key] = value
+                        changed = True
+                if changed:
+                    conn.execute(
+                        "UPDATE intelligence_niche_packs SET payload=?,updated_at=? WHERE slug=?",
+                        (json.dumps(saved, ensure_ascii=False), stamp, slug),
+                    )
                 continue
             conn.execute(
                 "INSERT INTO intelligence_niche_packs(slug,name,payload,created_at,updated_at) VALUES(?,?,?,?,?)",
@@ -205,7 +230,7 @@ def _seed_niche_catalog():
                     stamp,
                 ),
             )
-            existing.add(slug)
+            existing[slug] = json.dumps(pack, ensure_ascii=False)
 
 
 def ensure_niche_pack(niche):
@@ -266,6 +291,9 @@ def save_niche_pack(data):
         "chain_signals",
         "source_types",
         "enrichment_waterfall",
+        "search_methods",
+        "review_signals",
+        "technology_signals",
     ):
         values = data.get(key, pack.get(key, _default_pack(name)[key]))
         if not isinstance(values, list) or len(values) > 30:
@@ -619,7 +647,7 @@ def _contact_confidence(row):
     return min(100, score), reasons
 
 
-def _signals(row, audit, changed=False):
+def _signals(row, audit, changed=False, pack=None):
     signals = []
 
     def add(kind, label, evidence, strength="candidate"):
@@ -676,6 +704,43 @@ def _signals(row, audit, changed=False):
             "review_activity",
             f"{count} Google review(s) listed",
             reviews.get("url", ""),
+            "observed",
+        )
+    try:
+        rating = float(reviews.get("rating") or row.get("rating") or 0)
+    except (TypeError, ValueError):
+        rating = 0
+    if rating and rating < 4 and count >= 20:
+        add(
+            "reputation_opportunity",
+            f"Observed rating {rating:g} across {count} listed reviews",
+            reviews.get("url") or row.get("source_url", ""),
+            "observed",
+        )
+    source_text = " ".join(
+        str(row.get(key) or "") for key in ("source", "source_url", "profile_url")
+    ).casefold()
+    if not _clean(row.get("website")) and any(
+        marker in source_text for marker in ("google", "maps", "place")
+    ):
+        add(
+            "website_not_supplied",
+            "Collected listing supplied no website; verify before treating it as absent",
+            row.get("source_url") or row.get("profile_url", ""),
+            "candidate",
+        )
+    pack = pack if isinstance(pack, dict) else {}
+    evidence_payload = " ".join(
+        str(row.get(key) or "")
+        for key in ("evidence", "observations", "verification", "website_audit")
+    )
+    for technology in research_packs.observed_technologies(
+        evidence_payload, pack.get("technology_signals", [])
+    ):
+        add(
+            "technology_observed",
+            f"Published evidence mentions {technology}",
+            row.get("website") or row.get("source_url", ""),
             "observed",
         )
     return signals
@@ -791,7 +856,7 @@ def compile_job(job):
             score, confidence_reasons = _contact_confidence(row)
             outcomes = _latest_outcomes(conn, company_id, _clean(row.get("email")))
             action, priority, reason = _next_action(row, outcomes, score)
-            signals = _signals(row, audit, changed)
+            signals = _signals(row, audit, changed, pack)
             intelligence = {
                 "entity_id": company_id,
                 "parent_brand_id": parent_id,

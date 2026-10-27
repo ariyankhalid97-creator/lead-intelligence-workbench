@@ -6,6 +6,7 @@ from unittest.mock import patch
 
 import engine
 import intelligence
+import research_packs
 from leadfinder import Lead
 
 
@@ -35,9 +36,34 @@ class IntelligenceTests(unittest.TestCase):
                     "phone": phone,
                     "email": email,
                     "decision_maker": "Jamie Owner",
-                    "email_quality": json.dumps({"recommended": [{"email": email, "recommended": True}]}),
-                    "verification": json.dumps({"status": "complete", "website": {"status": "reachable", "final_url": "https://acme.test"}, "website_audit": {"status": "reachable", "url": "https://acme.test", "contact_form": False, "booking_path": False}}),
-                    "evidence": json.dumps([{"field": "email", "value": email, "url": "https://acme.test/contact", "basis": "page_text"}]),
+                    "email_quality": json.dumps(
+                        {"recommended": [{"email": email, "recommended": True}]}
+                    ),
+                    "verification": json.dumps(
+                        {
+                            "status": "complete",
+                            "website": {
+                                "status": "reachable",
+                                "final_url": "https://acme.test",
+                            },
+                            "website_audit": {
+                                "status": "reachable",
+                                "url": "https://acme.test",
+                                "contact_form": False,
+                                "booking_path": False,
+                            },
+                        }
+                    ),
+                    "evidence": json.dumps(
+                        [
+                            {
+                                "field": "email",
+                                "value": email,
+                                "url": "https://acme.test/contact",
+                                "basis": "page_text",
+                            }
+                        ]
+                    ),
                 }
             ],
         }
@@ -61,24 +87,85 @@ class IntelligenceTests(unittest.TestCase):
         changed = self.job(phone="214-555-0199")
         intelligence.compile_job(changed)
         self.assertEqual(row["entity_id"], changed["rows"][0]["entity_id"])
-        self.assertTrue(json.loads(changed["rows"][0]["intelligence"])["change_detected"])
+        self.assertTrue(
+            json.loads(changed["rows"][0]["intelligence"])["change_detected"]
+        )
 
     def test_outcome_updates_queue_and_suppression_gate(self):
         job = self.job()
         intelligence.compile_job(job)
         row = job["rows"][0]
-        intelligence.record_outcome({"company_id": row["entity_id"], "email": row["email"], "outcome": "bounced"})
+        intelligence.record_outcome(
+            {
+                "company_id": row["entity_id"],
+                "email": row["email"],
+                "outcome": "bounced",
+            }
+        )
         self.assertFalse(intelligence.preflight(row, row["email"])["eligible"])
         self.assertEqual("suppress", intelligence.queue()[0]["action"])
         with engine.connection() as conn:
-            self.assertIsNotNone(conn.execute("SELECT 1 FROM outreach_suppressions WHERE email=?", (row["email"],)).fetchone())
+            self.assertIsNotNone(
+                conn.execute(
+                    "SELECT 1 FROM outreach_suppressions WHERE email=?", (row["email"],)
+                ).fetchone()
+            )
 
     def test_niche_pack_is_editable_and_bounded(self):
-        slug = intelligence.save_niche_pack({"name": "Pool Cleaning", "synonyms": ["pool cleaner", "pool maintenance"], "decision_maker_roles": ["owner"]})
+        slug = intelligence.save_niche_pack(
+            {
+                "name": "Pool Cleaning",
+                "synonyms": ["pool cleaner", "pool maintenance"],
+                "decision_maker_roles": ["owner"],
+                "search_methods": ["radius coverage check"],
+                "technology_signals": ["PoolBrain"],
+                "review_signals": ["new low-rating review"],
+            }
+        )
         self.assertEqual("pool-cleaning", slug)
-        pack = next(item for item in intelligence.niche_packs() if item["name"] == "Pool Cleaning")
+        pack = next(
+            item
+            for item in intelligence.niche_packs()
+            if item["name"] == "Pool Cleaning"
+        )
         self.assertEqual(["pool cleaner", "pool maintenance"], pack["synonyms"])
+        self.assertEqual(["radius coverage check"], pack["search_methods"])
+        self.assertEqual(["PoolBrain"], pack["technology_signals"])
         self.assertEqual("user_approved", pack["generated_by"])
+
+    def test_restaurant_pack_adds_methods_terms_and_technology_hypotheses(self):
+        pack = intelligence.ensure_niche_pack("Restaurants")
+        self.assertIn("restaurant", pack["vertical_search_terms"])
+        self.assertIn("Toast", pack["technology_signals"])
+        self.assertIn(
+            "rating below 4.0 with at least 20 reviews", pack["search_methods"]
+        )
+        self.assertIn("new one or two star review", pack["review_signals"])
+        self.assertIn("cporter202/google-maps-scraping-apis", pack["method_source"])
+
+    def test_catalog_methods_create_only_evidence_labeled_opportunities(self):
+        pack = intelligence.ensure_niche_pack("Restaurants")
+        row = {
+            "rating": "3.7",
+            "reviews": "45",
+            "source": "google_maps_browser",
+            "source_url": "https://www.google.com/maps/place/example",
+            "website": "",
+            "evidence": json.dumps(
+                [{"url": "https://restaurant.test", "text": "Order online with Toast"}]
+            ),
+        }
+        signals = intelligence._signals(row, {}, False, pack)
+        by_kind = {item["kind"]: item for item in signals}
+        self.assertEqual("observed", by_kind["reputation_opportunity"]["strength"])
+        self.assertEqual("candidate", by_kind["website_not_supplied"]["strength"])
+        self.assertIn("verify before", by_kind["website_not_supplied"]["label"])
+        self.assertIn("Toast", by_kind["technology_observed"]["label"])
+
+    def test_technology_names_are_not_inferred_from_missing_evidence(self):
+        self.assertEqual(
+            [], research_packs.observed_technologies("", ["Toast", "Clover"])
+        )
 
     def test_niche_pack_exclusion_only_uses_strong_business_fields(self):
         pack = {"exclusions": ["jobs", "training"]}
@@ -86,7 +173,11 @@ class IntelligenceTests(unittest.TestCase):
         intelligence.apply_niche_pack(ordinary, pack)
         self.assertNotIn("niche_exclusion", ordinary.quality_flags)
 
-        excluded = Lead(name="Roofing Jobs and Training", category="Training center", match_status="service_match")
+        excluded = Lead(
+            name="Roofing Jobs and Training",
+            category="Training center",
+            match_status="service_match",
+        )
         intelligence.apply_niche_pack(excluded, pack)
         self.assertEqual("candidate", excluded.match_status)
         self.assertIn("niche_exclusion:jobs", json.loads(excluded.quality_flags))
@@ -95,13 +186,34 @@ class IntelligenceTests(unittest.TestCase):
         job = self.job()
         intelligence.compile_job(job)
         row = job["rows"][0]
-        intelligence.browser_checkpoint({"company_id": row["entity_id"], "service": "linkedin", "status": "security_check", "url": "https://www.linkedin.com/company/acme"})
+        intelligence.browser_checkpoint(
+            {
+                "company_id": row["entity_id"],
+                "service": "linkedin",
+                "status": "security_check",
+                "url": "https://www.linkedin.com/company/acme",
+            }
+        )
         self.assertEqual("manual_browser_review", intelligence.queue()[0]["action"])
-        intelligence.browser_checkpoint({"company_id": row["entity_id"], "service": "linkedin", "status": "complete", "url": "https://www.linkedin.com/company/acme"})
+        intelligence.browser_checkpoint(
+            {
+                "company_id": row["entity_id"],
+                "service": "linkedin",
+                "status": "complete",
+                "url": "https://www.linkedin.com/company/acme",
+            }
+        )
         self.assertEqual("ready_for_outreach", intelligence.queue()[0]["action"])
 
         variant = intelligence.variant_index(row, "campaign-1", 2)
-        intelligence.record_outcome({"company_id": row["entity_id"], "email": row["email"], "campaign_id": "campaign-1", "outcome": "replied"})
+        intelligence.record_outcome(
+            {
+                "company_id": row["entity_id"],
+                "email": row["email"],
+                "campaign_id": "campaign-1",
+                "outcome": "replied",
+            }
+        )
         results = intelligence.experiment_results("campaign-1")["variants"]
         variant_name = chr(65 + variant)
         self.assertEqual(1, results[variant_name]["assigned"])
@@ -110,14 +222,28 @@ class IntelligenceTests(unittest.TestCase):
     def test_rerun_restores_supported_contacts_and_ai_terms_persist(self):
         job = self.job()
         intelligence.compile_job(job)
-        sparse = [{"name": "Acme Roof", "city": "Dallas", "website": "https://acme.test", "evidence": "[]"}]
+        sparse = [
+            {
+                "name": "Acme Roof",
+                "city": "Dallas",
+                "website": "https://acme.test",
+                "evidence": "[]",
+            }
+        ]
         self.assertEqual(1, intelligence.restore_remembered_contacts(sparse))
         self.assertEqual("owner@acme.test", sparse[0]["email"])
         self.assertEqual("2145550100", sparse[0]["phone"])
-        self.assertEqual("restored_from_prior_compiled_evidence", json.loads(sparse[0]["contact_memory"])["status"])
+        self.assertEqual(
+            "restored_from_prior_compiled_evidence",
+            json.loads(sparse[0]["contact_memory"])["status"],
+        )
 
-        intelligence.record_ai_search_terms("Roofing", ["roof restoration contractor"], "local-model")
-        pack = next(item for item in intelligence.niche_packs() if item["name"] == "Roofing")
+        intelligence.record_ai_search_terms(
+            "Roofing", ["roof restoration contractor"], "local-model"
+        )
+        pack = next(
+            item for item in intelligence.niche_packs() if item["name"] == "Roofing"
+        )
         self.assertIn("roof restoration contractor", pack["synonyms"])
         self.assertEqual(["roof restoration contractor"], pack["ai_terms"])
 

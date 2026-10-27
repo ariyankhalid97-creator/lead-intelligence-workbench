@@ -228,6 +228,35 @@ select,
 .phase-two-geography {
   align-items: end;
 }
+.registry-search-panel {
+  margin-bottom: var(--s5);
+}
+.registry-filters {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr)) auto;
+  gap: var(--s3);
+  align-items: end;
+}
+.registry-filters label {
+  display: grid;
+  gap: var(--s2);
+}
+.registry-card .registry-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s2);
+  margin: var(--s3) 0;
+}
+@media (max-width: 900px) {
+  .registry-filters {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+@media (max-width: 620px) {
+  .registry-filters {
+    grid-template-columns: 1fr;
+  }
+}
 @media (max-width: 1120px) {
   .connection-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));

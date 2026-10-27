@@ -27,7 +27,7 @@ The app helps you move through one continuous process:
 - **Multi-source waterfall:** Google Maps through a dedicated Chrome profile, OpenStreetMap, public web discovery, Wikidata, the NPI Registry for relevant US healthcare searches, business websites, and an optional local Maps Extractor API.
 - **Platform-aware research:** source-specific public-profile searches for Clutch, GoodFirms, Y Combinator, Product Hunt, BetaList, Wellfound, Yelp, Yellow Pages, Manta, Chamber of Commerce, BBB, MapQuest, Alignable, Houzz, Thumbtack, Bark, Taskrabbit, Upwork, Fiverr, and other niche-relevant directories.
 - **Market-signal verification:** bounded public discovery for Indeed, RemoteOK, and Wellfound, plus direct review links for the Meta Ad Library and Google Ads Transparency Center.
-- **200 curated niche packs:** deterministic phrases and aliases improve query planning for home services, automotive, professional services, healthcare, hospitality, and specialty businesses.
+- **200 curated niche packs:** deterministic phrases and aliases improve query planning for home services, automotive, professional services, healthcare, hospitality, and specialty businesses. Editable search-method, review-monitoring and vertical technology-verification packs extend this memory without treating hypotheses as facts.
 - **Optional local AI:** automatically detects compatible local Ollama chat models and uses them for phrase suggestions, evidence summaries, and draft assistance.
 - **Evidence-first records:** observed facts, search snippets, inferred classifications, and unknown fields remain distinguishable.
 - **Durable diagnostics:** exact queries, provider failures, stop reasons, CAPTCHA pauses, timings, and duplicate decisions are retained for review.
@@ -55,6 +55,7 @@ Lead Extractor fans out to applicable sources automatically. A source failure do
 | YC / Product Hunt / BetaList | Startup and product signals | Activated for relevant startup, software, and product niches |
 | Indeed / RemoteOK / Wellfound | Hiring and company signals | Attached to an existing company as supporting evidence, not emitted as a separate lead |
 | Meta / Google ad transparency | Advertising review | Opens exact-company review paths; a tracking tag alone is not proof of an active campaign |
+| Business Registries workspace | Official entity and licence research | Country/niche directory finder for reviewed US, Singapore, Malaysia and Australia sources; access and fee requirements remain explicit |
 
 The project does not bypass logins, CAPTCHAs, paywalls, rate limits, or access controls. It does not claim that every platform exposes a public API.
 

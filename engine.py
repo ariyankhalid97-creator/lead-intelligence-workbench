@@ -352,7 +352,13 @@ def start(params):
         item.strip() for item in params.get("phrases", "").splitlines() if item.strip()
     ]
     combined_phrases = list(
-        dict.fromkeys([*existing_phrases, *niche_pack.get("synonyms", [])[1:]])
+        dict.fromkeys(
+            [
+                *existing_phrases,
+                *niche_pack.get("synonyms", [])[1:],
+                *niche_pack.get("vertical_search_terms", []),
+            ]
+        )
     )[:10]
     params["phrases"] = "\n".join(combined_phrases)
     with ACTIVE_LOCK:

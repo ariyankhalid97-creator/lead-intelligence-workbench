@@ -16,6 +16,7 @@ import engine
 from discovery import plan
 from research import strategy
 import reference_library
+import registry_catalog
 import local_ai
 import ai_tasks
 import verification
@@ -141,6 +142,17 @@ class Handler(BaseHTTPRequestHandler):
                 "last_checked",
             )
             self.send({"sources": [dict(zip(fields, row)) for row in rows]})
+            return
+        if path == "/api/registries":
+            values = parse_qs(parsed.query)
+            country = values.get("country", [""])[0]
+            niche = values.get("niche", [""])[0]
+            query = values.get("query", [""])[0]
+            payload = registry_catalog.metadata()
+            payload["directories"] = registry_catalog.list_directories(
+                country, niche, query
+            )
+            self.send(payload)
             return
         if path == "/api/outreach/status":
             self.send(outreach.provider_status())

@@ -686,10 +686,17 @@ function route() {
           ? "outreach"
           : hash === "sources"
             ? "sources"
-            : "discover";
-  ["discover", "history", "sources", "library", "outreach"].forEach((id) =>
-    $(id + "View").classList.toggle("hidden", id !== view),
-  );
+            : hash === "registries"
+              ? "registries"
+              : "discover";
+  [
+    "discover",
+    "history",
+    "sources",
+    "registries",
+    "library",
+    "outreach",
+  ].forEach((id) => $(id + "View").classList.toggle("hidden", id !== view));
   document
     .querySelectorAll("nav a")
     .forEach((a) => a.classList.toggle("active", a.hash === "#" + view));
@@ -697,17 +704,22 @@ function route() {
     discover: "Discover businesses",
     history: "Search history",
     sources: "Data sources",
+    registries: "Business registries",
     library: "Your research library",
     outreach: "Outreach campaigns",
   }[view];
   $("resultSection").classList.toggle(
     "hidden",
-    !job || ["sources", "library", "history", "outreach"].includes(view),
+    !job ||
+      ["sources", "registries", "library", "history", "outreach"].includes(
+        view,
+      ),
   );
   if (view === "history") loadHistory();
   if (view === "library") loadLibrary();
   if (view === "outreach") loadOutreach();
   if (view === "sources") loadConnections();
+  if (view === "registries") loadRegistries();
   if (hash === "results")
     $("resultSection").scrollIntoView({ behavior: "smooth" });
   if (hash === "diagnostics") {
@@ -715,6 +727,48 @@ function route() {
     $("resultSection").scrollIntoView({ behavior: "smooth" });
   }
 }
+
+let registryLoaded = false;
+async function loadRegistries(force = false) {
+  if (registryLoaded && !force) return;
+  const params = new URLSearchParams({
+    country: $("registryCountry")?.value || "",
+    niche: $("registryNiche")?.value || "",
+    query: $("registryQuery")?.value || "",
+  });
+  try {
+    const data = await api(`/api/registries?${params}`);
+    if (!registryLoaded) {
+      $("registryCountry").innerHTML =
+        '<option value="">All supported countries</option>' +
+        data.countries
+          .map((value) => `<option>${escapeHtml(value)}</option>`)
+          .join("");
+      $("registryNiche").innerHTML =
+        '<option value="">All niches</option>' +
+        data.niches
+          .map((value) => `<option>${escapeHtml(value)}</option>`)
+          .join("");
+    }
+    $("registryCards").innerHTML = data.directories.length
+      ? data.directories
+          .map(
+            (item) =>
+              `<article class="source-card registry-card"><h2>${escapeHtml(item.name)}</h2><span class="badge">${escapeHtml(item.country)}</span><p><b>${escapeHtml(item.authority)}</b></p><div class="registry-meta"><span class="badge candidate">${escapeHtml(item.access)}</span><span class="badge">${escapeHtml(item.mode.replaceAll("_", " "))}</span></div><p>${escapeHtml(item.search_hint)}</p><small>${escapeHtml(item.niches.join(" · "))}</small><p>${link(item.url, "Open official directory ↗")}</p></article>`,
+          )
+          .join("")
+      : '<div class="empty-state"><b>No matching official directory</b><p>Try a broader country, niche or capability.</p></div>';
+    $("registryNotice").textContent =
+      `${data.directories.length} reviewed directory route${data.directories.length === 1 ? "" : "s"}. ${data.notice}`;
+    registryLoaded = true;
+  } catch (error) {
+    $("registryNotice").textContent = error.message;
+  }
+}
+$("registrySearch").addEventListener("click", () => loadRegistries(true));
+$("registryQuery").addEventListener("keydown", (event) => {
+  if (event.key === "Enter") loadRegistries(true);
+});
 window.addEventListener("hashchange", route);
 async function updatePlan() {
   if ($("niche").value.trim().length < 2) {
@@ -2303,8 +2357,11 @@ function showNichePack() {
   $("nichePackExclusions").value = (pack.exclusions || []).join("\n");
   $("nichePackRoles").value = (pack.decision_maker_roles || []).join("\n");
   $("nichePackSignals").value = (pack.opportunity_signals || []).join("\n");
+  $("nichePackMethods").value = (pack.search_methods || []).join("\n");
+  $("nichePackTechnologies").value = (pack.technology_signals || []).join("\n");
+  $("nichePackReviewSignals").value = (pack.review_signals || []).join("\n");
   $("nichePackStatus").textContent =
-    `${pack.generated_by === "user_approved" ? "User-approved" : "Local deterministic"} pack · ${(pack.enrichment_waterfall || []).length} enrichment stages.`;
+    `${pack.generated_by === "user_approved" ? "User-approved" : "Local deterministic"} pack · ${(pack.search_methods || []).length} research methods · ${(pack.technology_signals || []).length} technology signals · ${(pack.review_signals || []).length} review signals.`;
 }
 $("nichePackSelect").addEventListener("change", showNichePack);
 $("nichePackForm").addEventListener("submit", async (event) => {
@@ -2321,12 +2378,15 @@ $("nichePackForm").addEventListener("submit", async (event) => {
         exclusions: listField($("nichePackExclusions").value),
         decision_maker_roles: listField($("nichePackRoles").value),
         opportunity_signals: listField($("nichePackSignals").value),
+        search_methods: listField($("nichePackMethods").value),
+        technology_signals: listField($("nichePackTechnologies").value),
+        review_signals: listField($("nichePackReviewSignals").value),
       }),
     });
     nichePacks = await api("/api/intelligence/niche-packs");
     renderNichePacks();
     $("nichePackStatus").textContent =
-      "Niche pack saved. New searches will use this terminology and enrichment order.";
+      "Niche pack saved. New searches and local-AI planning will use these methods and terminology.";
   } catch (err) {
     $("nichePackStatus").textContent = err.message;
   }

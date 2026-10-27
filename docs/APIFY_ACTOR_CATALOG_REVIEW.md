@@ -6,6 +6,8 @@
 
 Use the catalog to help users choose an Apify actor. Do not treat it as a free data source, automatically run every listed actor, or rely on its examples as a stable API contract.
 
+The catalog's reusable search, qualification and review-monitoring concepts are now implemented locally in version 2.4.2. See [SEARCH_METHOD_PACKS.md](SEARCH_METHOD_PACKS.md). This does not enable actor execution.
+
 ## Important findings
 
 - The repository currently presents 217 actor listings and groups them by capability.

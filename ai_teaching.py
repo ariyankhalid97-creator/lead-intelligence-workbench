@@ -507,7 +507,10 @@ def context(niche, pack=None):
     for phrase in approved_examples(niche, 12):
         if phrase.casefold() not in {item.casefold() for item in approved}:
             approved.append(phrase)
-    specialist = []
+    specialist = _values(pack.get("synonyms"), 12)
+    for phrase in _values(pack.get("vertical_search_terms"), 12):
+        if phrase.casefold() not in {item.casefold() for item in specialist}:
+            specialist.append(phrase)
     for phrase in _values(curated.get("terms"), 12):
         if phrase.casefold() not in {
             item.casefold() for item in approved
@@ -537,6 +540,10 @@ def compile_context(niche, pack=None):
     result = {
         "editor_notes": notes,
         "avoid_claims_about": avoid,
+        "research_methods_not_evidence": _values(pack.get("search_methods"), 9),
+        "technology_names_to_check_not_assume": _values(
+            pack.get("technology_signals"), 12
+        ),
         "claim_rules": list(COMPILE_RULES),
     }
     return {key: value for key, value in result.items() if value}
