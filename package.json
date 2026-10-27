@@ -1,0 +1,63 @@
+{
+  "name": "lead-extractor-desktop",
+  "productName": "Lead Extractor",
+  "version": "2.2.0",
+  "description": "Local-first lead research, verification, intelligence, and approval-gated outreach desktop workspace",
+  "author": "ariyankhalid97-creator",
+  "license": "MIT",
+  "private": true,
+  "main": "electron/main.js",
+  "scripts": {
+    "start": "electron .",
+    "desktop": "electron .",
+    "build:windows": "electron-builder --win nsis",
+    "test:electron": "node scripts/electron-smoke.js",
+    "test:e2e": "playwright test"
+  },
+  "build": {
+    "appId": "local.leadextractor.desktop",
+    "productName": "Lead Extractor",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "electron/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": ".",
+        "to": "backend",
+        "filter": [
+          "*.py",
+          "dashboard/**/*",
+          "replica/schema.sql",
+          "schemas/**/*",
+          "requirements.txt"
+        ]
+      }
+    ],
+    "win": {
+      "target": "nsis",
+      "icon": "build/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "deleteAppDataOnUninstall": false,
+      "runAfterFinish": true,
+      "include": "build/installer.nsh",
+      "artifactName": "Lead-Extractor-Setup-${version}.${ext}"
+    }
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "^4.11.0",
+    "@playwright/test": "^1.58.0",
+    "electron": "^45.0.0",
+    "electron-builder": "^26.0.12",
+    "prettier": "^3.9.10"
+  }
+}

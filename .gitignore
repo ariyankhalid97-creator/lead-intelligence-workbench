@@ -1,0 +1,49 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+
+# Node / Electron
+node_modules/
+release/
+dist/
+*.blockmap
+
+# Local secrets and environment
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.pfx
+*.p12
+
+# User data: databases, browser sessions, contacts, campaigns and logs
+data/
+leads/
+logs/
+*.db
+*.db-shm
+*.db-wal
+*.sqlite*
+
+# Test output
+test-results/
+playwright-report/
+coverage/
+
+# Local-only build and research artifacts
+desktop-launcher/
+investor_materials/
+replica/*
+!replica/schema.sql
+
+# OS / editors
+.DS_Store
+Thumbs.db
+desktop.ini
+.idea/
+.vscode/
+

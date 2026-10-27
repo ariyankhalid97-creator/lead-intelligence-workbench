@@ -1,0 +1,6 @@
+beautifulsoup4==4.15.0
+phonenumbers==9.0.41
+ddgs==9.16.0
+playwright==1.64.0
+keyring==25.7.0
+

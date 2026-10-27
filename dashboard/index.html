@@ -1,0 +1,800 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Lead Extractor · Outreach AI Engine</title>
+    <link rel="icon" href="/logo.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/tokens.css" />
+    <link rel="stylesheet" href="/style.css" />
+    <script defer src="/app.js"></script>
+  </head>
+  <body>
+    <aside class="sidebar">
+      <a class="brand" href="#discover" aria-label="Lead Extractor home" title="Lead Extractor home">
+        <img class="brand-mark" src="/logo.svg" alt="" width="46" height="46" />
+        <span class="brand-text">Lead Extractor<small>Outreach AI Engine</small></span>
+      </a>
+      <div class="nav-caption">Workspace</div>
+      <nav aria-label="Main navigation">
+        <a href="#discover" class="active" aria-label="Discover businesses" title="Discover businesses">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m16.2 16.2 4.3 4.3"/></svg>
+          <span>Discover businesses</span>
+        </a>
+        <a href="#history" aria-label="Search history" title="Search history">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.4"/><path d="M12 7.6V12l3 1.8"/></svg>
+          <span>Search history</span><b id="historyBadge">0</b>
+        </a>
+        <a href="#library" aria-label="Your research library" title="Your research library">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 6.5h6v13h-6z"/><path d="M13.5 6.5h6v13h-6z"/><path d="M4.5 6.5 7.5 4h6v2.5"/><path d="M13.5 6.5 16.5 4h3v2.5"/></svg>
+          <span>Your research library</span>
+        </a>
+        <a href="#outreach" aria-label="Outreach campaigns" title="Outreach campaigns">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 4 3.5 10.6l6.2 2.3L20 4Z"/><path d="M20 4 11.8 19.6l-.9-6.4L20 4Z"/></svg>
+          <span>Outreach campaigns</span><b id="outreachBadge" class="hidden">0</b>
+        </a>
+        <a href="#sources" aria-label="Data sources" title="Data sources">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><ellipse cx="12" cy="6" rx="7.5" ry="2.8"/><path d="M4.5 6v6c0 1.6 3.4 2.8 7.5 2.8s7.5-1.2 7.5-2.8V6"/><path d="M4.5 12v6c0 1.6 3.4 2.8 7.5 2.8s7.5-1.2 7.5-2.8v-6"/></svg>
+          <span>Data sources</span>
+        </a>
+      </nav>
+      <button id="navNewCampaign" class="nav-cta" type="button">
+        <span>New campaign</span><b>+</b>
+      </button>
+      <div class="sidebar-bottom">
+        <span class="local-dot"></span> Running on your computer
+        <p>Your searches and results stay in this workspace.</p>
+        <span class="version">LOCAL EDITION / 2.1</span>
+      </div>
+    </aside>
+    <main>
+      <header>
+        <div class="header-leading">
+          <div class="titlebar-history desktop-window-tools" aria-label="Page controls">
+            <button id="windowBack" class="titlebar-button" type="button" title="Back" aria-label="Go back">←</button>
+            <button id="windowForward" class="titlebar-button" type="button" title="Forward" aria-label="Go forward">→</button>
+            <button id="windowReload" class="titlebar-button" type="button" title="Refresh workspace" aria-label="Refresh workspace">↻</button>
+            <button id="menuDensityToggle" class="titlebar-button menu-density-toggle" type="button" title="Use wide menu" aria-label="Use wide menu" aria-pressed="false">☰</button>
+          </div>
+          <div class="breadcrumb">
+            Workspace <span>/</span> <b id="pageTitle">Discover businesses</b>
+          </div>
+        </div>
+        <div class="header-actions">
+          <span id="headerZoho" class="header-chip is-idle">Zoho · checking</span>
+          <span id="headerAi" class="header-chip is-idle">Local AI · checking</span>
+          <span class="local-pill">● Local &amp; free</span>
+          <div class="titlebar-window desktop-window-tools" aria-label="Window controls">
+            <button id="windowMinimize" class="titlebar-button window-control" type="button" title="Minimize" aria-label="Minimize">—</button>
+            <button id="windowMaximize" class="titlebar-button window-control" type="button" title="Maximize" aria-label="Maximize">□</button>
+            <button id="windowClose" class="titlebar-button window-control close" type="button" title="Close" aria-label="Close">×</button>
+          </div>
+        </div>
+      </header>
+      <section id="discoverView" class="view">
+        <div class="page-heading">
+          <div>
+            <div class="eyebrow">BUSINESS INTELLIGENCE</div>
+            <h1>A better starting point<br />for your next customer.</h1>
+            <p>
+              Find businesses, gather published contacts, and see the evidence
+              behind every lead.
+            </p>
+          </div>
+          <div class="heading-note">
+            <b>More than one source.</b
+            ><span
+              >Chrome Maps · OpenStreetMap<br />Web discovery · Business
+              websites</span
+            >
+          </div>
+        </div>
+        <div class="workbench">
+          <form id="searchForm" class="card search-card">
+            <div class="card-title">
+              <span class="step">01</span>
+              <div>
+                <h2>Build your search</h2>
+                <p>Who are you looking for?</p>
+              </div>
+            </div>
+            <label for="niche">Business or service</label
+            ><input
+              id="niche"
+              value=""
+              required
+              maxlength="120"
+              placeholder="e.g. roofing, dentist, web design, hood cleaning"
+            /><label for="location"
+              >Locations <span>One city per line · up to 5</span></label
+            ><textarea
+              id="location"
+              rows="2"
+              required
+              placeholder="Dallas, Texas"
+            >
+Dallas, Texas</textarea>
+            <div class="two-col">
+              <div>
+                <label for="limit">Maximum businesses</label
+                ><input
+                  id="limit"
+                  type="number"
+                  value="50"
+                  min="1"
+                  max="500"
+                  required
+                />
+              </div>
+              <div>
+                <label for="source">Search source</label
+                ><select id="source">
+                  <option value="hybrid">All free sources</option>
+                  <option value="browser">Chrome Maps</option>
+                  <option value="osm">OpenStreetMap</option>
+                  <option value="web">Web discovery</option>
+                  <option value="websites">Website list</option>
+                  <option value="google">Local extractor API</option>
+                </select>
+              </div>
+            </div>
+            <div class="two-col">
+              <div>
+                <label for="target">Search focus</label
+                ><select id="target">
+                  <option value="both">
+                    Businesses + individual providers
+                  </option>
+                  <option value="individuals">Individual providers</option>
+                  <option value="businesses">Businesses</option>
+                </select>
+              </div>
+              <div>
+                <label for="coverage">Geographic coverage</label
+                ><select id="coverage">
+                  <option value="exact">Entered locations</option>
+                  <option value="metro">Include supported metro cities</option>
+                  <option value="states">US state city samples</option>
+                  <option value="usa">All 50 US state samples</option>
+                </select>
+              </div>
+            </div>
+            <div class="two-col">
+              <div>
+                <label for="depth">Research depth</label
+                ><select id="depth">
+                  <option value="quick">Quick</option>
+                  <option value="balanced" selected>Balanced</option>
+                  <option value="deep">Deep</option>
+                </select>
+              </div>
+              <div>
+                <label for="queryBudget">Query budget</label
+                ><input
+                  id="queryBudget"
+                  type="number"
+                  min="4"
+                  max="120"
+                  value="24"
+                  required
+                />
+              </div>
+            </div>
+            <label for="researchProfile">Research profile</label>
+            <select id="researchProfile">
+              <option value="general">General service research</option>
+              <option value="hood_automation">
+                Optional: Hood report & quote research
+              </option>
+            </select>
+            <p class="fine-print" id="profileHelp">
+              General mode works for any niche. The optional hood profile only
+              adds that niche’s specialized offer scoring.
+            </p>
+            <div class="check-row">
+              <input id="preferIndependent" type="checkbox" checked /><label
+                for="preferIndependent"
+                >Prioritize independent operators<small
+                  >Keep unknown operators visible until evidence supports a
+                  label.</small
+                ></label
+              >
+            </div>
+            <div class="check-row">
+              <input id="browser" type="checkbox" checked /><label for="browser"
+                >Use dedicated Chrome window<small
+                  >Opens its own profile for public Maps listings.</small
+                ></label
+              >
+            </div>
+            <div class="check-row">
+              <input id="enrich" type="checkbox" checked /><label for="enrich"
+                >Find published contact details<small
+                  >Check website and contact pages for emails and phones.</small
+                ></label
+              >
+            </div>
+            <div class="check-row linked-workflow-choice">
+              <input id="linkedWorkflow" type="checkbox" checked /><label for="linkedWorkflow"
+                >Run the complete linked workflow<small
+                  >Queues verification, organization, strict local-AI compilation, and outreach readiness after discovery. Email sending always requires separate approval.</small
+                ></label
+              >
+            </div>
+            <details class="advanced">
+              <summary>Search phrases & website input</summary>
+              <label for="phrases"
+                >Additional phrases <span>One per line</span></label
+              ><textarea
+                id="phrases"
+                rows="2"
+                placeholder="Optional specialist terms for this niche"
+              ></textarea
+              ><label for="urls"
+                >Business website URLs <span>Optional · up to 100</span></label
+              ><textarea
+                id="urls"
+                rows="3"
+                placeholder="https://business-website.com"
+              ></textarea>
+            </details>
+            <button id="runButton" class="primary" type="submit">
+              Find businesses <span>→</span>
+            </button>
+            <p class="form-error" id="formError" role="alert"></p>
+            <p class="fine-print">
+              Result limits are ceilings. Coverage depends on the source and
+              location.
+            </p>
+          </form>
+          <div class="right-stack">
+            <section class="card plan-card ai-card" aria-labelledby="aiHeading">
+              <div class="ai-heading">
+                <div>
+                  <span class="eyebrow">OPTIONAL · ON YOUR COMPUTER</span>
+                  <h2 id="aiHeading">Local AI research assistant</h2>
+                </div>
+                <button id="aiRefresh" class="secondary" type="button">
+                  Check connection
+                </button>
+              </div>
+              <p id="aiStatus" class="muted" role="status">
+                Checking your installed local models…
+              </p>
+              <label for="aiModel">Local model</label>
+              <select id="aiModel" disabled>
+                <option value="">No model available</option>
+              </select>
+              <label for="aiOffer">Your outreach offer (optional)</label>
+              <textarea
+                id="aiOffer"
+                rows="2"
+                maxlength="800"
+                placeholder="Describe what you actually provide. Used only when you request a lead review."
+              ></textarea>
+              <p class="ai-explanation">
+                Suggest search terms here, or open a saved lead’s Details for an
+                evidence review and outreach draft. AI suggestions can be wrong.
+                Nothing is sent, and ordinary searches work without AI.
+              </p>
+              <button
+                id="aiPlanButton"
+                class="secondary"
+                type="button"
+                disabled
+              >
+                Suggest search terms
+              </button>
+              <p id="aiPlanStatus" class="ai-task-status" role="status"></p>
+              <div id="aiPlanOutput" class="ai-output hidden"></div>
+              <p class="fine-print">
+                Applied AI search tags are sent to Chrome Maps in Balanced and
+                Deep searches. Quick mode uses only the main service phrase.
+              </p>
+            </section>
+            <div class="card plan-card">
+              <div class="card-title">
+                <span class="step">02</span>
+                <div>
+                  <h2>Search strategy</h2>
+                  <p>Related phrases improve niche coverage.</p>
+                </div>
+              </div>
+              <div id="phraseChips" class="chips"></div>
+              <p id="planNote" class="muted"></p>
+              <div class="strategy-footer">
+                <span>✓ Duplicate merging</span><span>✓ Contact evidence</span
+                ><span>✓ Saved progress</span>
+              </div>
+            </div>
+            <div class="card plan-card">
+              <h2>Five-stage research plan</h2>
+              <p class="muted">
+                Documented sources, public search evidence, and transparent
+                rules. No paid AI key required.
+              </p>
+              <div id="researchStages" class="research-stages"></div>
+              <p id="coverageSummary" class="muted"></p>
+              <details>
+                <summary>Sources, cities & query preview</summary>
+                <div id="strategyPreview"></div>
+              </details>
+            </div>
+            <div id="runCard" class="card run-card">
+              <div class="ready-icon">⌖</div>
+              <h2>Ready when you are.</h2>
+              <p>
+                Your results will include the business, available contacts,
+                service relevance, and original source links.
+              </p>
+              <div class="empty-grid">
+                <span>Business discovery</span><span>Contact collection</span
+                ><span>Quality review</span><span>Export & follow up</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+      <section id="historyView" class="view hidden">
+        <div class="page-heading">
+          <div>
+            <div class="eyebrow">YOUR WORKSPACE</div>
+            <h1>Pick up where you left off.</h1>
+            <p>
+              One group per service. Expand it to see each saved run and what
+              was scraped. Searches, partial results, and diagnostics stay
+              saved.
+            </p>
+          </div>
+        </div>
+        <div id="historyList" class="history-list"></div>
+      </section>
+      <section id="sourcesView" class="view hidden">
+        <div class="page-heading">
+          <div>
+            <div class="eyebrow">COVERAGE & CAPABILITIES</div>
+            <h1>Know where your leads come from.</h1>
+            <p>
+              Every connected source has a purpose. No paid API calls run in the
+              background.
+            </p>
+          </div>
+        </div>
+        <div id="sourceCards" class="source-grid"></div>
+        <div class="notice">
+          OpenStreetMap data © OpenStreetMap contributors, ODbL. City lookup
+          uses cached, rate-limited Nominatim requests.
+          <a
+            href="https://operations.osmfoundation.org/policies/nominatim/"
+            target="_blank"
+            rel="noreferrer"
+            >Service usage policy</a
+          >
+        </div>
+      </section>
+      <section id="libraryView" class="view hidden">
+        <div class="page-heading">
+          <div>
+            <div class="eyebrow">RESEARCH LIBRARY</div>
+            <h1>Finished research, compiled and organized.</h1>
+            <p>
+              Completed verification runs become full research collections.
+              Historical imports stay separate and can be checked again.
+            </p>
+          </div>
+        </div>
+        <p class="notice">
+          Compiled collections retain every supporting source and merged-record
+          trail. Email recommendations classify published addresses but do not
+          prove deliverability. Nothing in this library sends outreach.
+        </p>
+        <p id="librarySummary" class="muted" aria-live="polite">
+          Loading your reference library…
+        </p>
+        <section class="card intelligence-workbench" aria-labelledby="intelligenceHeading">
+          <div class="card-title"><span class="step">AI</span><div><h2 id="intelligenceHeading">Lead intelligence memory</h2><p>One identity, evidence trail, next action and outreach history for every company.</p></div></div>
+          <div id="intelligenceStats" class="chips" aria-live="polite"></div>
+          <div class="memory-section-list">
+            <details class="library-memory-section">
+              <summary><span><b>Next best actions</b><small id="nextActionCount">Loading prioritized work…</small></span><span class="memory-section-icon" aria-hidden="true">+</span></summary>
+              <div class="memory-section-body"><div id="intelligenceQueue" class="intelligence-queue"><p>Loading work queue…</p></div></div>
+            </details>
+            <details class="library-memory-section">
+              <summary><span><b>Connected workflow</b><small>How discovery becomes verified, outreach-ready memory</small></span><span class="memory-section-icon" aria-hidden="true">+</span></summary>
+              <div class="memory-section-body"><ol class="workflow-list"><li>Discover with an approved niche pack</li><li>Verify sources and audit the website</li><li>Resolve company and contact identities</li><li>Prioritize the next best action</li><li>Run safety-gated outreach experiments</li><li>Learn from replies, bounces and wins</li></ol></div>
+            </details>
+            <details class="library-memory-section niche-pack-manager">
+              <summary><span><b>Manage niche research packs</b><small>Terminology, exclusions, decision-makers and opportunity signals</small></span><span class="memory-section-icon" aria-hidden="true">+</span></summary>
+              <div class="memory-section-body">
+                <form id="nichePackForm" class="niche-pack-form">
+                  <label for="nichePackSelect">Saved niche pack</label><select id="nichePackSelect"></select>
+                  <label for="nichePackName">Niche name</label><input id="nichePackName" maxlength="120" required />
+                  <label for="nichePackSynonyms">Search terminology · one per line</label><textarea id="nichePackSynonyms" rows="4"></textarea>
+                  <label for="nichePackExclusions">Exclusions · one per line</label><textarea id="nichePackExclusions" rows="3"></textarea>
+                  <label for="nichePackRoles">Decision-maker roles · one per line</label><textarea id="nichePackRoles" rows="3"></textarea>
+                  <label for="nichePackSignals">Opportunity signals · one per line</label><textarea id="nichePackSignals" rows="3"></textarea>
+                  <button class="secondary" type="submit">Save niche pack</button><p id="nichePackStatus" role="status"></p>
+                </form>
+              </div>
+            </details>
+          </div>
+        </section>
+        <div class="card search-card">
+          <div class="filter-bar">
+            <label for="libraryFilter" class="sr-only"
+              >Search research collections and historical prospects</label
+            ><input
+              id="libraryFilter"
+              placeholder="Search all research, businesses, cities or notes…"
+            /><button id="prepareRecheck" class="primary" type="button">
+              Prepare website recheck
+            </button>
+          </div>
+          <div class="filter-bar library-controls">
+            <label for="libraryGroup" class="sr-only">Group historical prospects</label>
+            <select id="libraryGroup">
+              <option value="state">Group by state</option>
+              <option value="city">Group by city</option>
+              <option value="none">No grouping</option>
+            </select>
+            <label for="librarySort" class="sr-only">Sort historical prospects</label>
+            <select id="librarySort">
+              <option value="place">City, state, then name</option>
+              <option value="name">Business name A–Z</option>
+              <option value="score">Historical score ↓</option>
+              <option value="recheck">Needs recheck first</option>
+            </select>
+          </div>
+          <p class="fine-print">
+            Choose up to 100 websites below, then review the search settings
+            before running. Rechecking retrieves current public website
+            evidence; it does not verify mailbox delivery.
+          </p>
+          <p id="libraryAction" role="status"></p>
+          <div id="libraryList" class="library-list"></div>
+        </div>
+      </section>
+      <section id="outreachView" class="view hidden">
+        <div class="page-heading outreach-heading">
+          <div>
+            <div class="eyebrow">APPROVAL-GATED OUTREACH</div>
+            <h1>Every campaign, one clear queue.</h1>
+            <p>
+              Compose from several templates or your local model, review every
+              message, then run one or many campaigns. Every send still needs
+              your explicit approval.
+            </p>
+          </div>
+          <div class="heading-note outreach-note">
+            <b>Multi-campaign</b>
+            <span>Run up to five campaigns at once.<br />60–120 s pacing per message.</span>
+          </div>
+        </div>
+
+        <div class="outreach-statusbar">
+          <span id="zohoStatus" class="status-chip is-warn" role="status">Checking Zoho connection…</span>
+          <span id="aiStatusChip" class="status-chip is-idle">Local AI · checking</span>
+          <span id="runningChip" class="status-chip is-idle">No campaign is sending</span>
+          <button id="zohoSetupButton" class="ghost small" type="button" aria-expanded="false" aria-controls="zohoConnectCard">Zoho setup</button>
+        </div>
+
+        <details class="card zoho-connect-card" id="zohoConnectCard">
+          <summary><b>Connect Zoho Mail</b></summary>
+          <p>One-time setup: create a Zoho OAuth client using redirect URL <code>http://127.0.0.1:8788/api/outreach/zoho/callback</code>, paste its two values below, then approve the popup using your already logged-in Zoho session.</p>
+          <form id="zohoConnectForm" class="zoho-connect-form">
+            <label for="zohoClientId">Client ID</label><input id="zohoClientId" type="password" autocomplete="off" required />
+            <label for="zohoClientSecret">Client secret</label><input id="zohoClientSecret" type="password" autocomplete="off" required />
+            <label for="zohoDc">Zoho data center</label><select id="zohoDc"><option value="com">zoho.com</option><option value="eu">zoho.eu</option><option value="in">zoho.in</option><option value="com.au">zoho.com.au</option><option value="jp">zoho.jp</option><option value="ca">zoho.ca</option><option value="sa">zoho.sa</option></select>
+            <button class="primary" type="submit">Save and open Zoho approval</button>
+            <button id="zohoDisconnect" class="danger" type="button">Disconnect</button>
+          </form>
+          <p id="zohoConnectStatus" role="status"></p>
+          <p class="fine-print">The client secret and refresh token are stored in Windows Credential Manager, not in lead files or diagnostics. The popup requests only account lookup and email creation.</p>
+        </details>
+
+        <div class="tabs outreach-tabs" role="tablist" aria-label="Outreach sections">
+          <button id="campaignsTab" role="tab" aria-selected="true">Campaigns <b id="campaignCount">0</b></button>
+          <button id="composeTab" role="tab" aria-selected="false">New campaign</button>
+          <button id="templatesTab" role="tab" aria-selected="false">Templates <b id="templateCount">0</b></button>
+        </div>
+
+        <div id="campaignsPanel" class="outreach-panel">
+          <div class="campaign-board">
+            <section class="card campaign-list-card">
+              <div class="card-title"><span class="step">01</span><div><h2>Campaigns</h2><p>Pick one to review, start or pause.</p></div></div>
+              <div class="campaign-toolbar">
+                <label class="sr-only" for="campaignFilter">Filter campaigns</label>
+                <input id="campaignFilter" type="search" placeholder="Filter by niche, template or status" />
+                <button id="refreshCampaigns" class="ghost small" type="button">Refresh</button>
+              </div>
+              <div id="campaignList" class="campaign-list" role="listbox" aria-label="Campaigns"></div>
+            </section>
+            <section class="card campaign-detail-card">
+              <div id="campaignDetail" class="campaign-detail"></div>
+            </section>
+          </div>
+        </div>
+
+        <div id="composePanel" class="outreach-panel compose-board hidden">
+          <form id="campaignForm" class="card campaign-form">
+            <div class="card-title"><span class="step">01</span><div><h2>New campaign</h2><p>Choose an organized collection from the Research Library.</p></div></div>
+
+            <label for="campaignJob">Research Library collection</label>
+            <select id="campaignJob" disabled><option value="">Loading research collections…</option></select>
+            <p id="campaignJobHint" class="fine-print left"></p>
+
+            <div class="field-group">
+              <span class="field-label">Message source</span>
+              <div class="segmented" id="campaignSource">
+                <label><input type="radio" name="campaignSource" value="template" checked /><span>Templates</span></label>
+                <label><input type="radio" name="campaignSource" value="ai" /><span>Local AI</span></label>
+              </div>
+            </div>
+
+            <div id="templateSourceBlock">
+              <div class="field-head">
+                <label for="templateSearch">Templates</label>
+                <span id="templateSelectedCount" class="field-count">0 selected</span>
+              </div>
+              <input id="templateSearch" type="search" placeholder="Find a template by name or niche" />
+              <div id="campaignTemplates" class="template-picker" role="group" aria-label="Templates for this campaign"></div>
+              <div class="field-foot">
+                <button id="templateSelectAll" class="ghost small" type="button">Select all</button>
+                <button id="templateSelectNone" class="ghost small" type="button">Clear</button>
+                <button id="templateManage" class="ghost small" type="button">Manage templates</button>
+              </div>
+              <p class="fine-print left">Recipients rotate evenly through the selected templates, so a single campaign can test several angles.</p>
+              <div id="campaignTemplatePreview" class="template-preview hidden"></div>
+            </div>
+
+            <div id="aiSourceBlock" class="hidden">
+              <label for="campaignAiModel">Assigned local model</label>
+              <select id="campaignAiModel" disabled><option value="">Local AI unavailable</option></select>
+              <label for="campaignAiOffer">Your offer</label>
+              <textarea id="campaignAiOffer" rows="3" maxlength="800" placeholder="One or two sentences on what you actually provide."></textarea>
+              <p class="ai-note">Drafts use saved website evidence only. Leads without evidence are marked <b>needs attention</b> and are never sent.</p>
+            </div>
+
+            <div class="two-col">
+              <div><label for="campaignScope">Recipients</label><select id="campaignScope"><option value="matches">Service/category matches</option><option value="all">All leads with email</option></select></div>
+              <div><label for="campaignMaximum">Maximum</label><input id="campaignMaximum" type="number" min="1" max="20" value="10" /></div>
+            </div>
+            <div id="campaignRecipientPreview" class="recipient-preview"></div>
+            <button id="prepareCampaign" class="primary" type="button">Create campaign <span>→</span></button>
+            <p id="campaignPrepareStatus" role="status"></p>
+            <p class="fine-print">Maximum 20 designated recipients per campaign. Drafts never send automatically.</p>
+          </form>
+          <aside class="compose-aside">
+            <div class="card compose-note">
+              <div class="eyebrow">BEFORE YOU SEND</div>
+              <h2>Nothing leaves without you.</h2>
+              <ol class="compose-steps">
+                <li><span class="step-dot">1</span><div><b>Compose</b><span>Mix several templates or let your local model draft each message.</span></div></li>
+                <li><span class="step-dot">2</span><div><b>Review</b><span>Open the campaign and read every recipient, subject and body.</span></div></li>
+                <li><span class="step-dot">3</span><div><b>Approve</b><span>Start sending when it looks right. Pause at any time.</span></div></li>
+              </ol>
+              <ul class="compose-facts">
+                <li><b>20</b><span>recipients max per campaign</span></li>
+                <li><b>60–120 s</b><span>pacing between messages</span></li>
+                <li><b>5</b><span>campaigns can send at once</span></li>
+                <li><b>0</b><span>messages sent automatically</span></li>
+              </ul>
+            </div>
+          </aside>
+        </div>
+
+        <div id="templatesPanel" class="outreach-panel hidden">
+          <div class="template-board">
+            <section class="card template-list-card">
+              <div class="card-title"><span class="step">01</span><div><h2>Saved templates</h2><p>Each campaign can use one or several.</p></div></div>
+              <div id="templateList" class="template-list"></div>
+            </section>
+            <form id="templateForm" class="card template-form">
+              <div class="card-title"><span class="step">02</span><div><h2 id="templateFormTitle">New template</h2><p>Variables are filled per lead.</p></div></div>
+              <label for="templateName">Template name</label><input id="templateName" maxlength="80" required placeholder="Roofing website audit" />
+              <label for="templateNiche">Niche</label><input id="templateNiche" maxlength="120" required placeholder="Roofing" />
+              <label for="templateSubject">Subject</label><input id="templateSubject" maxlength="180" required placeholder="Quick question for {{business_name}}" />
+              <label for="templateBody">Message</label><textarea id="templateBody" rows="10" maxlength="5000" required placeholder="Hello {{business_name}},&#10;&#10;...&#10;&#10;If this is not relevant, reply unsubscribe."></textarea>
+              <p class="fine-print left">Variables: {{business_name}}, {{niche}}, {{city}}, {{website}}, {{ai_summary}}, {{unsubscribe}}. AI text is used only when a saved, reviewed AI summary exists.</p>
+              <div class="template-form-actions">
+                <button class="primary" type="submit">Save template</button>
+                <button id="templateReset" class="ghost" type="button">Clear</button>
+              </div>
+              <p id="templateStatus" role="status"></p>
+            </form>
+          </div>
+        </div>
+      </section>
+      <section
+        id="resultSection"
+        class="card result-section hidden"
+        aria-label="Search results"
+      >
+        <div class="result-top">
+          <div>
+            <div class="eyebrow">SEARCH OUTPUT</div>
+            <h2 id="resultHeading">Businesses</h2>
+          </div>
+          <div class="actions">
+            <a id="csvLink" class="button secondary">CSV ↓</a
+            ><a id="jsonLink" class="button secondary">JSON ↓</a
+            ><a id="logLink" class="button secondary">Diagnostics ↓</a>
+          </div>
+        </div>
+        <div id="stats" class="stats"></div>
+        <p id="diagnosis" class="notice hidden"></p>
+        <section id="workflowCard" class="workflow-card hidden" aria-labelledby="workflowTitle">
+          <div class="workflow-card-heading">
+            <div><span class="eyebrow">CONNECTED WORKFLOW</span><h2 id="workflowTitle">One continuous research pipeline</h2></div>
+            <button id="cancelWorkflow" class="danger hidden" type="button">Stop workflow</button>
+          </div>
+          <p id="workflowStatus" class="muted" role="status">Waiting for a linked search.</p>
+          <progress id="workflowProgress" value="0" max="100" aria-label="Complete workflow progress"></progress>
+          <div id="workflowStages" class="workflow-stage-grid"></div>
+          <p class="fine-print">The screen stays here while each stage advances. Research is saved between stages. Outreach is never sent without your explicit approval.</p>
+        </section>
+        <section class="browser-profile-card" aria-labelledby="batchCompilerTitle">
+          <div>
+            <span class="eyebrow">EVIDENCE-BOUND LOCAL AI</span>
+            <h3 id="batchCompilerTitle">Compile strict intelligence</h3>
+            <p class="muted">Compile every retained lead, or only leads that completed verification. Unchanged evidence is skipped and invalid AI output falls back to clearly labeled deterministic rules.</p>
+            <p id="aiBatchStatus" class="browser-profile-status" role="status">Ready after this search finishes.</p>
+            <progress id="aiBatchProgress" value="0" max="100" aria-label="Batch intelligence compilation progress"></progress>
+          </div>
+          <div class="browser-profile-actions">
+            <select id="aiBatchScope" aria-label="Batch compilation scope"><option value="qualified">Qualified + verified leads</option><option value="verified">All verified leads</option><option value="all">All retained leads</option></select>
+            <button id="aiBatchCompile" class="primary" type="button">Compile all leads</button>
+          </div>
+        </section>
+        <div class="tabs" role="tablist" aria-label="Result views">
+          <button id="resultsTab" role="tab" aria-selected="true">
+            Business list</button
+          ><button id="verificationTab" role="tab" aria-selected="false">
+            Verification
+          </button
+          ><button id="diagnosticsTab" role="tab" aria-selected="false">
+            Run diagnostics
+          </button>
+        </div>
+        <div id="tablePanel">
+          <div class="filter-bar qualification-filters">
+            <label for="operatorFilter" class="sr-only">Operator type</label>
+            <select id="operatorFilter">
+              <option value="all">All operator types</option>
+              <option value="independent">Solo + independent</option>
+              <option value="solo_provider">Solo providers</option>
+              <option value="chain_or_franchise">Chains / franchises</option>
+              <option value="agency">Agencies</option>
+              <option value="unknown">Unknown / not assessed</option>
+            </select>
+            <label for="evidenceFilter" class="sr-only">Evidence filter</label>
+            <select id="evidenceFilter">
+              <option value="all">All evidence levels</option>
+              <option value="profile">Public seller profiles</option>
+              <option value="first_party_page">Website observed</option>
+              <option value="weak">Needs more evidence</option>
+            </select>
+            <div id="qualificationStats" class="chips"></div>
+          </div>
+          <div class="filter-bar">
+            <label class="sr-only" for="filter">Search results</label
+            ><input
+              id="filter"
+              placeholder="Search name, address, contact…"
+            /><label class="sr-only" for="contactFilter">Contact filter</label
+            ><select id="contactFilter">
+              <option value="all">All contacts</option>
+              <option value="email">Has email</option>
+              <option value="recommendedEmail">Recommended email</option>
+              <option value="phone">Has phone</option>
+              <option value="noWebsite">No website</option>
+              <option value="matched">Service matches</option></select
+            ><label class="sr-only" for="sort">Sort results</label
+            ><select id="sort">
+              <option value="relevance">Confirmed niche first</option>
+              <option value="quality">Contact quality ↓</option>
+              <option value="name">Business name A–Z</option></select
+            ><label class="sr-only" for="qualificationSort"
+              >Qualification order</label
+            ><select id="qualificationSort">
+              <option value="none">Standard order</option>
+              <option value="independent">Independent first</option>
+              <option value="evidence">Evidence strength ↓</option>
+              <option value="opportunity">
+                Opportunity evidence points ↓
+              </option></select
+            ><label class="sr-only" for="opportunityFilter"
+              >Workflow evidence</label
+            ><select id="opportunityFilter">
+              <option value="all">All workflow evidence</option>
+              <option value="manual_workflow">
+                Explicit manual-workflow signal
+              </option>
+              <option value="reporting">Reports mentioned</option>
+              <option value="repairs">Repair work mentioned</option>
+              <option value="software">Software mentioned</option>
+              <option value="named">Named decision-maker</option></select
+            ><button id="filteredCsv" class="secondary">Export visible</button>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>BUSINESS / LOCATION</th>
+                  <th>CONTACTS</th>
+                  <th>WEBSITE</th>
+                  <th>QUALITY</th>
+                  <th>SERVICE MATCH</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody id="leadRows"></tbody>
+            </table>
+          </div>
+          <p id="visibleCount" class="table-note"></p>
+        </div>
+        <div id="verificationPanel" class="diagnostics hidden">
+          <section class="browser-profile-card" aria-labelledby="browserProfileTitle">
+            <div>
+              <span class="eyebrow">Persistent local session</span>
+              <h3 id="browserProfileTitle">Dedicated research browser</h3>
+              <p class="muted">Sign in once inside this Chrome profile. Maps searches and later assisted verification reuse the same local cookies after dashboard restarts.</p>
+              <p id="browserProfileStatus" class="browser-profile-status" role="status">Checking dedicated browser…</p>
+            </div>
+            <div class="browser-profile-actions">
+              <button id="openFacebookProfile" class="secondary" type="button">Open Facebook login</button>
+              <button id="openLinkedInProfile" class="secondary" type="button">Open LinkedIn login</button>
+              <button id="openMapsProfile" class="secondary" type="button">Open Google Maps</button>
+              <button id="openAllProfiles" class="primary" type="button">Open both</button>
+              <button id="resumeBrowserSearch" class="secondary" type="button">Open Maps + resume</button>
+            </div>
+          </section>
+          <div class="verification-toolbar">
+            <div>
+              <h3>Second-round public verification</h3>
+              <p class="muted">Checks saved websites, published business-page links, website ad-tracking signals, Google Maps reviews, and public Yelp/BBB/social search results. The dedicated browser retains your login for assisted review; it does not bypass challenges or extract private-profile data.</p>
+            </div>
+            <label for="verificationScope" class="sr-only">Verification scope</label>
+            <select id="verificationScope">
+              <option value="all">All retained candidates</option>
+              <option value="unfinished">Only unfinished browser checks</option>
+              <option value="matches">Confirmed/category matches only</option>
+            </select>
+            <button id="startVerification" class="primary" type="button">Run second-round verification</button>
+          </div>
+          <p id="verificationStatus" class="notice">Open a finished search to run verification.</p>
+          <progress id="verificationProgress" value="0" max="100" aria-label="Verification progress"></progress>
+          <div id="verificationStats" class="chips"></div>
+          <p class="fine-print">“Tracking detected” means code was observed on the business website; it does not prove a campaign is currently running. “Not verified” does not mean no ads exist.</p>
+          <div id="verificationList" class="verification-list"></div>
+        </div>
+        <div id="diagnosticsPanel" class="diagnostics hidden">
+          <div id="rootCauseSummary"></div>
+          <div id="savedStrategy"></div>
+          <div id="qualitySummary"></div>
+          <div id="providerCards" class="provider-grid"></div>
+          <h3>Search timeline</h3>
+          <div id="timeline"></div>
+        </div>
+      </section>
+      <footer>
+        Built for focused business research.
+        <span>Public contacts · Source evidence · No subscription</span>
+      </footer>
+    </main>
+    <dialog id="leadDialog" aria-labelledby="detailTitle">
+      <div class="dialog-head">
+        <h2 id="detailTitle">Business details</h2>
+        <button
+          id="closeDialog"
+          class="secondary"
+          aria-label="Close business details"
+        >
+          ✕
+        </button>
+      </div>
+      <div id="detailBody"></div>
+    </dialog>
+    <div id="liveStatus" class="sr-only" aria-live="polite"></div>
+  </body>
+</html>

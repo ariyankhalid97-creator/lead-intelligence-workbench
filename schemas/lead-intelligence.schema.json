@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "local://lead-intelligence.schema.json",
+  "title": "Lead Intelligence Records",
+  "type": "object",
+  "required": ["canonicalCompany", "operatingLocations", "evidenceClaims", "contacts", "sequenceStates"],
+  "properties": {
+    "canonicalCompany": { "$ref": "#/$defs/CanonicalCompany" },
+    "operatingLocations": { "type": "array", "items": { "$ref": "#/$defs/OperatingLocation" } },
+    "evidenceClaims": { "type": "array", "items": { "$ref": "#/$defs/EvidenceClaim" } },
+    "contacts": { "type": "array", "items": { "$ref": "#/$defs/ContactRecord" } },
+    "sequenceStates": { "type": "array", "items": { "$ref": "#/$defs/OutreachSequenceState" } }
+  },
+  "$defs": {
+    "CanonicalCompany": {
+      "type": "object", "additionalProperties": false,
+      "required": ["parentBrandId", "canonicalName", "aliases", "operatingEntityIds", "firstSeen", "lastSeen"],
+      "properties": {
+        "parentBrandId": { "type": "string" }, "canonicalName": { "type": "string" }, "corporateDomain": { "type": "string" },
+        "aliases": { "type": "array", "items": { "type": "string" } }, "operatingEntityIds": { "type": "array", "items": { "type": "string" } },
+        "firstSeen": { "type": "string", "format": "date-time" }, "lastSeen": { "type": "string", "format": "date-time" }
+      }
+    },
+    "OperatingLocation": {
+      "type": "object", "additionalProperties": false,
+      "required": ["operatingEntityId", "companyId", "name", "localityKey", "ownershipScope", "sourceEvidenceIds"],
+      "properties": {
+        "operatingEntityId": { "type": "string" }, "parentBrandId": { "type": "string" }, "companyId": { "type": "string" }, "name": { "type": "string" },
+        "localityKey": { "type": "string" }, "mapsPlaceId": { "type": "string" }, "localPhone": { "type": "string" },
+        "ownershipScope": { "enum": ["independent", "franchise", "corporate_branch", "unknown"] }, "sourceEvidenceIds": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "EvidenceClaim": {
+      "type": "object", "additionalProperties": false,
+      "required": ["evidenceId", "companyId", "field", "value", "sourceType", "capturedAt", "verbatimExcerpt", "authorityWeight", "freshnessWeight", "trustScore"],
+      "properties": {
+        "evidenceId": { "type": "string" }, "companyId": { "type": "string" }, "operatingEntityId": { "type": "string" }, "field": { "type": "string" }, "value": { "type": "string" },
+        "sourceType": { "enum": ["live_official_website", "website_dom", "verified_maps_profile", "recent_social_page", "public_filing", "third_party_directory", "serp_snippet", "dns_mx", "smtp_verification", "inferred_permutation"] },
+        "sourceUrl": { "type": "string" }, "capturedAt": { "type": "string" }, "verbatimExcerpt": { "type": "string" }, "selector": { "type": "string" },
+        "authorityWeight": { "type": "number", "minimum": 0, "maximum": 1 }, "freshnessWeight": { "type": "number", "minimum": 0, "maximum": 1 }, "trustScore": { "type": "number", "minimum": 0, "maximum": 1 }
+      }
+    },
+    "ContactRecord": {
+      "type": "object", "additionalProperties": false,
+      "required": ["contactId", "operatingEntityId", "observationState", "verificationState", "eligibleForOutreach", "sourceEvidenceIds", "firstSeen", "lastSeen"],
+      "properties": {
+        "contactId": { "type": "string" }, "operatingEntityId": { "type": "string" }, "name": { "type": "string" }, "role": { "type": "string" }, "email": { "type": "string" }, "phone": { "type": "string" },
+        "observationState": { "enum": ["published", "inferred_permutation", "historical_not_rediscovered"] }, "verificationState": { "enum": ["smtp_valid", "catch_all_risk", "mx_only", "unverified", "invalid"] },
+        "eligibleForOutreach": { "type": "boolean" }, "sourceEvidenceIds": { "type": "array", "items": { "type": "string" } }, "firstSeen": { "type": "string" }, "lastSeen": { "type": "string" }
+      }
+    },
+    "OutreachSequenceState": {
+      "type": "object", "additionalProperties": false,
+      "required": ["sequenceStateId", "sequenceId", "companyId", "email", "currentStep", "state", "createdAt", "updatedAt"],
+      "properties": {
+        "sequenceStateId": { "type": "string" }, "sequenceId": { "type": "string" }, "campaignId": { "type": "string" }, "companyId": { "type": "string" }, "operatingEntityId": { "type": "string" }, "email": { "type": "string" }, "currentStep": { "type": "integer", "minimum": 0 },
+        "state": { "enum": ["scheduled", "active", "paused_ooo", "reply_follow_up", "halted", "complete", "suppressed"] }, "nextActionAt": { "type": "string" }, "pauseUntil": { "type": "string" }, "lastOutcome": { "type": "string" }, "createdAt": { "type": "string" }, "updatedAt": { "type": "string" }
+      }
+    }
+  }
+}
