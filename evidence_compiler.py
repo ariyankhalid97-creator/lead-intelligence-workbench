@@ -22,9 +22,18 @@ SOURCE_AUTHORITY = {
 }
 
 COMPILER_SYSTEM_PROMPT = """You are the Evidence-Bound Lead Intelligence Compiler for a local-first B2B research engine.
-Use only the supplied evidence_ledger. Every claim and signal must cite existing source_evidence_ids and copy a literal verbatim_excerpt. Search snippets are discovery-only. Website emails are not mailbox-valid without smtp_verification status valid. MX proves domain mail capability only. Pixels prove tag installation, not active spend. Missing text means not_observed, never confirmed_absent: omit unsupported claims instead of writing 'no evidence', 'not observed', or similar negative claims. Do not repeat claims. A service claim must cite service evidence, a leadership claim must cite leadership evidence, an ad claim must cite ad/tracking evidence, and the claim statement must share concrete terms with its excerpt. If evidence is insufficient, choose manual_browser_review or contact_discovery and state the gap. Return only valid JSON matching the supplied schema. Never invent names, contacts, attributes, citations or delivery states."""
+Use only the supplied evidence_ledger. Every claim and signal must cite existing source_evidence_ids and copy a literal verbatim_excerpt. Search snippets are discovery-only. Website emails are not mailbox-valid without smtp_verification status valid. MX proves domain mail capability only. Pixels prove tag installation, not active spend. Missing text means not_observed, never confirmed_absent: omit unsupported claims instead of writing 'no evidence', 'not observed', or similar negative claims. Return at most 4 compiled_claims. One distinct fact per claim; never repeat or rephrase the same excerpt in a second claim. Keep each statement under 240 characters and quote the shortest exact supporting span. A service claim must cite service evidence, a leadership claim must cite leadership evidence, an ad claim must cite ad/tracking evidence, and the claim statement must share concrete terms with its excerpt. Return opportunity_signals only when cited evidence supports a real signal; otherwise return an empty array. Do not use opportunity_signals to repeat a service claim or to recommend manual review. If evidence is insufficient, choose manual_browser_review or contact_discovery and state the gap in next_best_action. Return only valid JSON matching the supplied schema. Never invent names, contacts, attributes, citations or delivery states."""
 
-QUEUE_STATES = {"verification", "contact_discovery", "decision_maker_research", "manual_browser_review", "outreach", "reply_follow_up", "suppression", "customer"}
+QUEUE_STATES = {
+    "verification",
+    "contact_discovery",
+    "decision_maker_research",
+    "manual_browser_review",
+    "outreach",
+    "reply_follow_up",
+    "suppression",
+    "customer",
+}
 DELIVERABILITY = {"smtp_valid", "catch_all_risk", "mx_only", "unverified", "invalid"}
 CLAIM_STATUS = {"verified_observation", "unverified_snippet", "inferred_permutation"}
 
@@ -34,7 +43,9 @@ def _clean(value, limit=1500):
 
 
 def source_type(item):
-    basis = _clean(item.get("basis") or item.get("method") or item.get("source_type")).casefold()
+    basis = _clean(
+        item.get("basis") or item.get("method") or item.get("source_type")
+    ).casefold()
     url = _clean(item.get("url") or item.get("source_url")).casefold()
     if "snippet" in basis:
         return "serp_snippet"
@@ -44,7 +55,9 @@ def source_type(item):
         return "verified_maps_profile"
     if "filing" in basis:
         return "public_filing"
-    if "social" in basis or any(host in url for host in ("linkedin.com", "facebook.com", "instagram.com")):
+    if "social" in basis or any(
+        host in url for host in ("linkedin.com", "facebook.com", "instagram.com")
+    ):
         return "recent_social_page"
     if "dns" in basis or "mx" in basis:
         return "dns_mx"
@@ -97,66 +110,135 @@ def evidence_claim(company_id, operating_entity_id, job_id, item, captured_at):
 
 
 def output_schema():
-    citation = {"type": "array", "minItems": 1, "items": {"type": "string"}}
+    citation = {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 2,
+        "items": {"type": "string"},
+    }
     return {
         "type": "object",
         "additionalProperties": False,
         "required": [
-            "canonical_company_id", "operating_location_id", "compiled_claims",
-            "contact_readiness", "opportunity_signals", "semantic_change_summary",
+            "canonical_company_id",
+            "operating_location_id",
+            "compiled_claims",
+            "contact_readiness",
+            "opportunity_signals",
+            "semantic_change_summary",
             "next_best_action",
         ],
         "properties": {
             "canonical_company_id": {"type": "string"},
             "operating_location_id": {"type": ["string", "null"]},
             "compiled_claims": {
-                "type": "array", "maxItems": 30,
+                "type": "array",
+                "maxItems": 6,
                 "items": {
-                    "type": "object", "additionalProperties": False,
-                    "required": ["claim_type", "statement", "verification_status", "confidence_score", "source_evidence_ids", "verbatim_excerpt"],
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": [
+                        "claim_type",
+                        "statement",
+                        "verification_status",
+                        "confidence_score",
+                        "source_evidence_ids",
+                        "verbatim_excerpt",
+                    ],
                     "properties": {
-                        "claim_type": {"type": "string", "enum": ["service_offering", "tech_stack", "ad_signal", "hiring_signal", "leadership_change", "review_metric"]},
-                        "statement": {"type": "string"},
-                        "verification_status": {"type": "string", "enum": sorted(CLAIM_STATUS)},
-                        "confidence_score": {"type": "number", "minimum": 0, "maximum": 1},
+                        "claim_type": {
+                            "type": "string",
+                            "enum": [
+                                "service_offering",
+                                "tech_stack",
+                                "ad_signal",
+                                "hiring_signal",
+                                "leadership_change",
+                                "review_metric",
+                            ],
+                        },
+                        "statement": {"type": "string", "maxLength": 300},
+                        "verification_status": {
+                            "type": "string",
+                            "enum": sorted(CLAIM_STATUS),
+                        },
+                        "confidence_score": {
+                            "type": "number",
+                            "minimum": 0,
+                            "maximum": 1,
+                        },
                         "source_evidence_ids": citation,
-                        "verbatim_excerpt": {"type": "string"},
+                        "verbatim_excerpt": {"type": "string", "maxLength": 400},
                     },
                 },
             },
             "contact_readiness": {
-                "type": "object", "additionalProperties": False,
-                "required": ["primary_contact_id", "contact_type", "deliverability_state", "eligible_for_outreach"],
+                "type": "object",
+                "additionalProperties": False,
+                "required": [
+                    "primary_contact_id",
+                    "contact_type",
+                    "deliverability_state",
+                    "eligible_for_outreach",
+                ],
                 "properties": {
                     "primary_contact_id": {"type": ["string", "null"]},
-                    "contact_type": {"type": "string", "enum": ["decision_maker", "generic_role_inbox", "none"]},
-                    "deliverability_state": {"type": "string", "enum": sorted(DELIVERABILITY)},
+                    "contact_type": {
+                        "type": "string",
+                        "enum": ["decision_maker", "generic_role_inbox", "none"],
+                    },
+                    "deliverability_state": {
+                        "type": "string",
+                        "enum": sorted(DELIVERABILITY),
+                    },
                     "eligible_for_outreach": {"type": "boolean"},
                 },
             },
             "opportunity_signals": {
-                "type": "array", "maxItems": 20,
+                "type": "array",
+                "maxItems": 6,
                 "items": {
-                    "type": "object", "additionalProperties": False,
+                    "type": "object",
+                    "additionalProperties": False,
                     "required": ["signal_code", "summary", "source_evidence_ids"],
-                    "properties": {"signal_code": {"type": "string"}, "summary": {"type": "string"}, "source_evidence_ids": citation},
+                    "properties": {
+                        "signal_code": {"type": "string", "maxLength": 80},
+                        "summary": {"type": "string", "maxLength": 300},
+                        "source_evidence_ids": citation,
+                    },
                 },
             },
             "semantic_change_summary": {
-                "type": "object", "additionalProperties": False,
-                "required": ["is_material_change", "ignored_noise_fields", "material_changes_detected"],
+                "type": "object",
+                "additionalProperties": False,
+                "required": [
+                    "is_material_change",
+                    "ignored_noise_fields",
+                    "material_changes_detected",
+                ],
                 "properties": {
                     "is_material_change": {"type": "boolean"},
-                    "ignored_noise_fields": {"type": "array", "items": {"type": "string"}},
-                    "material_changes_detected": {"type": "array", "items": {"type": "string"}},
+                    "ignored_noise_fields": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                    },
+                    "material_changes_detected": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                    },
                 },
             },
             "next_best_action": {
-                "type": "object", "additionalProperties": False,
-                "required": ["queue_state", "rationale", "recommended_campaign_variant_id"],
+                "type": "object",
+                "additionalProperties": False,
+                "required": [
+                    "queue_state",
+                    "rationale",
+                    "recommended_campaign_variant_id",
+                ],
                 "properties": {
                     "queue_state": {"type": "string", "enum": sorted(QUEUE_STATES)},
-                    "rationale": {"type": "string"},
+                    "rationale": {"type": "string", "maxLength": 400},
                     "recommended_campaign_variant_id": {"type": ["string", "null"]},
                 },
             },
@@ -171,23 +253,84 @@ def validate_output(value, ledger):
     if not required.issubset(value):
         raise ValueError("Compiler output is missing required fields")
     evidence = {item["evidence_id"]: item for item in ledger}
+    claims = value.get("compiled_claims", [])
+    if not isinstance(claims, list) or len(claims) > 6:
+        raise ValueError("Compiler returned too many claims; keep at most six")
     seen_claims = set()
     allowed_fields = {
-        "service_offering": {"service", "service_match", "match_reason", "fact", "claim", "description"},
-        "tech_stack": {"technology", "technographic", "analytics", "software", "fact", "claim"},
-        "ad_signal": {"ad_signal", "advertising", "analytics", "tracking", "fact", "claim"},
+        "service_offering": {
+            "service",
+            "service_match",
+            "match_reason",
+            "fact",
+            "claim",
+            "description",
+        },
+        "tech_stack": {
+            "technology",
+            "technographic",
+            "analytics",
+            "software",
+            "fact",
+            "claim",
+        },
+        "ad_signal": {
+            "ad_signal",
+            "advertising",
+            "analytics",
+            "tracking",
+            "fact",
+            "claim",
+        },
         "hiring_signal": {"hiring", "job", "careers", "fact", "claim"},
-        "leadership_change": {"leadership", "decision_maker", "decision_maker_role", "owner", "founder", "fact", "claim"},
+        "leadership_change": {
+            "leadership",
+            "decision_maker",
+            "decision_maker_role",
+            "owner",
+            "founder",
+            "fact",
+            "claim",
+        },
         "review_metric": {"rating", "reviews", "review_metric", "fact", "claim"},
     }
-    negative_without_observation = re.compile(r"\b(?:no evidence|not observed|none found|does not appear|no indication|not found)\b", re.I)
-    stop = {"the", "and", "for", "with", "that", "this", "from", "was", "were", "has", "have", "been", "observed", "evidence", "company", "business"}
-    for claim in value.get("compiled_claims", []):
+    negative_without_observation = re.compile(
+        r"\b(?:no evidence|not observed|none found|does not appear|no indication|not found)\b",
+        re.I,
+    )
+    stop = {
+        "the",
+        "and",
+        "for",
+        "with",
+        "that",
+        "this",
+        "from",
+        "was",
+        "were",
+        "has",
+        "have",
+        "been",
+        "observed",
+        "evidence",
+        "company",
+        "business",
+    }
+    for claim in claims:
+        if not isinstance(claim, dict):
+            raise ValueError("Compiler claim is not an object")
         ids = claim.get("source_evidence_ids") or []
-        if not ids or any(item not in evidence for item in ids):
+        if (
+            not isinstance(ids, list)
+            or not ids
+            or len(ids) > 2
+            or any(item not in evidence for item in ids)
+        ):
             raise ValueError("Compiler claim lacks a valid evidence pointer")
         excerpt = _clean(claim.get("verbatim_excerpt"), 500)
-        if not excerpt or not any(excerpt in evidence[item]["verbatim_excerpt"] for item in ids):
+        if not excerpt or not any(
+            excerpt in evidence[item]["verbatim_excerpt"] for item in ids
+        ):
             raise ValueError("Compiler claim excerpt is not literal evidence")
         if claim.get("verification_status") not in CLAIM_STATUS:
             raise ValueError("Compiler claim has an invalid verification status")
@@ -197,50 +340,153 @@ def validate_output(value, ledger):
             raise ValueError("Compiler returned a duplicate claim")
         seen_claims.add(signature)
         if negative_without_observation.search(statement):
-            raise ValueError("Compiler converted missing evidence into a negative claim")
+            raise ValueError(
+                "Compiler converted missing evidence into a negative claim"
+            )
         permitted = allowed_fields.get(claim.get("claim_type"), set())
-        cited_fields = {_clean(evidence[item].get("field"), 80).casefold() for item in ids}
-        if permitted and not any(any(token in field for token in permitted) for field in cited_fields):
-            raise ValueError("Compiler claim type is not supported by the cited evidence field")
-        statement_tokens = {token for token in re.findall(r"[a-z0-9]{4,}", statement.casefold()) if token not in stop}
-        excerpt_tokens = {token for token in re.findall(r"[a-z0-9]{4,}", excerpt.casefold()) if token not in stop}
+        cited_fields = {
+            _clean(evidence[item].get("field"), 80).casefold() for item in ids
+        }
+        if permitted and not any(
+            any(token in field for token in permitted) for field in cited_fields
+        ):
+            raise ValueError(
+                "Compiler claim type is not supported by the cited evidence field"
+            )
+        statement_tokens = {
+            token
+            for token in re.findall(r"[a-z0-9]{4,}", statement.casefold())
+            if token not in stop
+        }
+        excerpt_tokens = {
+            token
+            for token in re.findall(r"[a-z0-9]{4,}", excerpt.casefold())
+            if token not in stop
+        }
         if statement_tokens and not statement_tokens.intersection(excerpt_tokens):
-            raise ValueError("Compiler statement is not textually supported by its cited excerpt")
-    for signal in value.get("opportunity_signals", []):
+            raise ValueError(
+                "Compiler statement is not textually supported by its cited excerpt"
+            )
+    signals = value.get("opportunity_signals", [])
+    if not isinstance(signals, list) or len(signals) > 6:
+        raise ValueError(
+            "Compiler returned too many opportunity signals; keep at most six"
+        )
+    for signal in signals:
+        if not isinstance(signal, dict):
+            raise ValueError("Opportunity signal is not an object")
         ids = signal.get("source_evidence_ids") or []
-        if not ids or any(item not in evidence for item in ids):
+        if (
+            not isinstance(ids, list)
+            or not ids
+            or len(ids) > 2
+            or any(item not in evidence for item in ids)
+        ):
             raise ValueError("Opportunity signal lacks a valid evidence pointer")
     action = value.get("next_best_action", {})
     if action.get("queue_state") not in QUEUE_STATES:
         raise ValueError("Compiler next action is invalid")
-    if value.get("contact_readiness", {}).get("deliverability_state") not in DELIVERABILITY:
+    if (
+        value.get("contact_readiness", {}).get("deliverability_state")
+        not in DELIVERABILITY
+    ):
         raise ValueError("Compiler deliverability state is invalid")
     return value
 
 
-def deterministic_output(company_id, operating_id, ledger, row, next_action, reason, signals, changed):
+def deterministic_output(
+    company_id, operating_id, ledger, row, next_action, reason, signals, changed
+):
     email_quality = row.get("email_quality", {})
     if isinstance(email_quality, str):
-        try: email_quality = json.loads(email_quality)
-        except ValueError: email_quality = {}
+        try:
+            email_quality = json.loads(email_quality)
+        except ValueError:
+            email_quality = {}
     recommended = email_quality.get("recommended", [])
     chosen = recommended[0] if recommended else {}
     delivery = chosen.get("deliverability", "not_tested")
-    delivery_state = "smtp_valid" if delivery == "smtp_valid" else "catch_all_risk" if "catch_all" in delivery else "mx_only" if delivery == "mail_domain_ready_mailbox_unverified" else "invalid" if delivery == "domain_unsendable" else "unverified"
+    delivery_state = (
+        "smtp_valid"
+        if delivery == "smtp_valid"
+        else "catch_all_risk"
+        if "catch_all" in delivery
+        else "mx_only"
+        if delivery == "mail_domain_ready_mailbox_unverified"
+        else "invalid"
+        if delivery == "domain_unsendable"
+        else "unverified"
+    )
     cited_signals = []
     for signal in signals:
         label = _clean(signal.get("label"))
         source_url = _clean(signal.get("evidence"), 1500)
-        match = next((item for item in ledger if item["field"] == "opportunity_signal" and item["value"] == label and (not source_url or item["source_url"] == source_url)), None)
+        match = next(
+            (
+                item
+                for item in ledger
+                if item["field"] == "opportunity_signal"
+                and item["value"] == label
+                and (not source_url or item["source_url"] == source_url)
+            ),
+            None,
+        )
         if match:
-            cited_signals.append({"signal_code": signal.get("kind", "observed_signal"), "summary": label, "source_evidence_ids": [match["evidence_id"]]})
-    action_map = {"ready_for_outreach": "outreach", "verify_public_sources": "verification", "decision_maker_verification": "decision_maker_research", "suppress": "suppression", "customer": "customer", "reply_follow_up": "reply_follow_up", "contact_discovery": "contact_discovery", "manual_browser_review": "manual_browser_review", "awaiting_reply": "outreach"}
+            cited_signals.append(
+                {
+                    "signal_code": signal.get("kind", "observed_signal"),
+                    "summary": label,
+                    "source_evidence_ids": [match["evidence_id"]],
+                }
+            )
+    action_map = {
+        "ready_for_outreach": "outreach",
+        "verify_public_sources": "verification",
+        "decision_maker_verification": "decision_maker_research",
+        "suppress": "suppression",
+        "customer": "customer",
+        "reply_follow_up": "reply_follow_up",
+        "contact_discovery": "contact_discovery",
+        "manual_browser_review": "manual_browser_review",
+        "awaiting_reply": "outreach",
+    }
     return {
         "canonical_company_id": company_id,
         "operating_location_id": operating_id or None,
         "compiled_claims": [],
-        "contact_readiness": {"primary_contact_id": None, "contact_type": "decision_maker" if row.get("decision_maker") else "generic_role_inbox" if row.get("email") else "none", "deliverability_state": delivery_state, "eligible_for_outreach": bool(chosen and delivery_state not in {"invalid", "catch_all_risk", "unverified"})},
+        "contact_readiness": {
+            "primary_contact_id": None,
+            "contact_type": "decision_maker"
+            if row.get("decision_maker")
+            else "generic_role_inbox"
+            if row.get("email")
+            else "none",
+            "deliverability_state": delivery_state,
+            "eligible_for_outreach": bool(
+                chosen
+                and delivery_state not in {"invalid", "catch_all_risk", "unverified"}
+            ),
+        },
         "opportunity_signals": cited_signals,
-        "semantic_change_summary": {"is_material_change": bool(changed), "ignored_noise_fields": ["timestamps", "session_ids", "rotating_reviews", "copyright_years", "ad_nonces"], "material_changes_detected": ["high_signal_public_evidence_changed"] if changed else []},
-        "next_best_action": {"queue_state": action_map.get(next_action, next_action if next_action in QUEUE_STATES else "manual_browser_review"), "rationale": reason, "recommended_campaign_variant_id": None},
+        "semantic_change_summary": {
+            "is_material_change": bool(changed),
+            "ignored_noise_fields": [
+                "timestamps",
+                "session_ids",
+                "rotating_reviews",
+                "copyright_years",
+                "ad_nonces",
+            ],
+            "material_changes_detected": ["high_signal_public_evidence_changed"]
+            if changed
+            else [],
+        },
+        "next_best_action": {
+            "queue_state": action_map.get(
+                next_action,
+                next_action if next_action in QUEUE_STATES else "manual_browser_review",
+            ),
+            "rationale": reason,
+            "recommended_campaign_variant_id": None,
+        },
     }

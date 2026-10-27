@@ -1,5 +1,4 @@
 import csv
-import io
 import json
 import sqlite3
 import tempfile
@@ -28,10 +27,25 @@ class QualityTests(unittest.TestCase):
         self.assertIn("roof replacement", planned["phrases"])
 
     def test_platform_planner_matches_b2b_and_startup_sources(self):
-        params = engine.validate({"niche": "software development agencies", "location": "Austin, Texas", "source": "hybrid"})
+        params = engine.validate(
+            {
+                "niche": "software development agencies",
+                "location": "Austin, Texas",
+                "source": "hybrid",
+            }
+        )
         prepared = engine.strategy(discovery.plan(params["niche"]), params)
         domains = {item["domain"] for item in prepared["platforms"]}
-        self.assertTrue({"clutch.co", "goodfirms.co", "ycombinator.com", "producthunt.com", "betalist.com", "wellfound.com"}.issubset(domains))
+        self.assertTrue(
+            {
+                "clutch.co",
+                "goodfirms.co",
+                "ycombinator.com",
+                "producthunt.com",
+                "betalist.com",
+                "wellfound.com",
+            }.issubset(domains)
+        )
 
     def test_npi_provider_is_applicable_only_to_healthcare_terms(self):
         self.assertEqual("Dentist", public_sources.npi_taxonomy("pediatric dentists"))
@@ -74,10 +88,19 @@ class QualityTests(unittest.TestCase):
     def test_animal_talent_requires_animal_and_talent_evidence(self):
         planned = discovery.plan("Animal Talent Agencies")
         generic = lf.Lead(name="Human Stars", category="Talent agency")
-        discovery.relevance(generic, planned, "Dallas", "Actors and models for television")
+        discovery.relevance(
+            generic, planned, "Dallas", "Actors and models for television"
+        )
         self.assertEqual("candidate", generic.match_status)
         first_party = lf.Lead(name="Paws Casting", category="Talent agency")
-        first_party.observations = json.dumps([{"basis": "page_text", "text": "We provide trained animals and pet casting for film productions."}])
+        first_party.observations = json.dumps(
+            [
+                {
+                    "basis": "page_text",
+                    "text": "We provide trained animals and pet casting for film productions.",
+                }
+            ]
+        )
         discovery.relevance(first_party, planned, "Dallas")
         self.assertEqual("service_match", first_party.match_status)
         listing = lf.Lead(name="Dognerd Animal Talent", category="Talent agency")
@@ -86,11 +109,25 @@ class QualityTests(unittest.TestCase):
 
     def test_generic_search_title_is_replaced_by_observed_page_brand(self):
         lead = lf.Lead(name="ABOUT")
-        lead.observations = json.dumps([{"basis": "page_text", "text": "ABOUT | HTM Animal Talent top of page CONTACT US"}])
+        lead.observations = json.dumps(
+            [
+                {
+                    "basis": "page_text",
+                    "text": "ABOUT | HTM Animal Talent top of page CONTACT US",
+                }
+            ]
+        )
         discovery.repair_generic_name(lead)
         self.assertEqual("HTM Animal Talent", lead.name)
         second = lf.Lead(name="FOR TALENT")
-        second.observations = json.dumps([{"basis": "page_text", "text": "FOR TALENT — THE DOG AGENCY ABOUT FOR BRANDS"}])
+        second.observations = json.dumps(
+            [
+                {
+                    "basis": "page_text",
+                    "text": "FOR TALENT — THE DOG AGENCY ABOUT FOR BRANDS",
+                }
+            ]
+        )
         discovery.repair_generic_name(second)
         self.assertEqual("THE DOG AGENCY", second.name)
 
@@ -141,14 +178,32 @@ class QualityTests(unittest.TestCase):
         self.assertEqual("food exporters", planned["phrases"][0])
         self.assertIn("food export companies", planned["phrases"])
         self.assertEqual(
-            {"Food Export contractor", "local Food Export", "independent Food Export", "Export Certification"},
+            {
+                "Food Export contractor",
+                "local Food Export",
+                "independent Food Export",
+                "Export Certification",
+            },
             {item["phrase"] for item in planned["rejected_phrases"]},
         )
-        params = engine.validate({"niche": "Food Export", "location": "Dallas, Texas", "source": "hybrid", "browser": True})
+        params = engine.validate(
+            {
+                "niche": "Food Export",
+                "location": "Dallas, Texas",
+                "source": "hybrid",
+                "browser": True,
+            }
+        )
         prepared = engine.strategy(planned, params)
         self.assertEqual([], prepared["platforms"])
-        self.assertIn('"Food Export" trade association business directory', [item["query"] for item in prepared["queries"]])
-        self.assertNotIn("contractor", " ".join(item["query"] for item in prepared["queries"]).casefold())
+        self.assertIn(
+            '"Food Export" trade association business directory',
+            [item["query"] for item in prepared["queries"]],
+        )
+        self.assertNotIn(
+            "contractor",
+            " ".join(item["query"] for item in prepared["queries"]).casefold(),
+        )
 
     def test_root_cause_report_preserves_exact_stop_and_merge_reasons(self):
         report = engine.root_cause_analysis(
@@ -188,7 +243,13 @@ class QualityTests(unittest.TestCase):
                     },
                 },
             ],
-            [{"kept_name": "A", "merged_name": "A LLC", "reason": "same_normalized_phone"}],
+            [
+                {
+                    "kept_name": "A",
+                    "merged_name": "A LLC",
+                    "reason": "same_normalized_phone",
+                }
+            ],
             4,
         )
         self.assertEqual(70, report["shortfall"])
@@ -224,6 +285,90 @@ class QualityTests(unittest.TestCase):
                 lambda *args, **kwargs: None,
             )
         self.assertEqual(["Acme Hood Cleaning"], [row.name for row in rows])
+
+    def test_web_media_domain_requires_business_schema(self):
+        results = [
+            {
+                "title": "Acme profile in Dallas, TX | Dallas News",
+                "href": "https://dallasnews.com/acme-profile",
+                "body": "Hood cleaning in Dallas",
+            }
+        ]
+        fake_ddgs = SimpleNamespace(
+            DDGS=lambda **kwargs: SimpleNamespace(text=lambda *args, **kwargs: results)
+        )
+        with (
+            patch.dict(sys.modules, {"ddgs": fake_ddgs}),
+            patch(
+                "discovery.fetch", return_value=b"<html><article>news</article></html>"
+            ),
+        ):
+            rows = discovery.web_search(
+                discovery.plan("hood cleaning"),
+                "Dallas, Texas",
+                5,
+                threading.Event(),
+                lambda *args, **kwargs: None,
+            )
+        self.assertEqual([], rows)
+
+    def test_web_media_domain_allows_explicit_organization_schema(self):
+        results = [
+            {
+                "title": "Acme Hood Cleaning in Dallas, TX | Dallas News",
+                "href": "https://dallasnews.com/acme-profile",
+                "body": "Hood cleaning in Dallas",
+            }
+        ]
+        fake_ddgs = SimpleNamespace(
+            DDGS=lambda **kwargs: SimpleNamespace(text=lambda *args, **kwargs: results)
+        )
+        document = b'<script type="application/ld+json">{"@type":"Organization","name":"Acme Hood Cleaning"}</script>'
+        with (
+            patch.dict(sys.modules, {"ddgs": fake_ddgs}),
+            patch("discovery.fetch", return_value=document),
+        ):
+            rows = discovery.web_search(
+                discovery.plan("hood cleaning"),
+                "Dallas, Texas",
+                5,
+                threading.Event(),
+                lambda *args, **kwargs: None,
+            )
+        self.assertEqual(["Acme Hood Cleaning"], [row.name for row in rows])
+
+    def test_npi_secondary_waterfall_finds_practice_website(self):
+        provider = lf.Lead(
+            name="Jane Example",
+            city="Dallas",
+            source="npi_registry",
+            source_id="1234567890",
+        )
+        fake_ddgs = SimpleNamespace(
+            DDGS=lambda **kwargs: SimpleNamespace(
+                text=lambda *args, **kwargs: [
+                    {
+                        "title": "Jane Example Family Dental",
+                        "href": "https://janeexample.test",
+                        "body": "Jane Example provides family dental care in Dallas.",
+                    }
+                ]
+            )
+        )
+        with (
+            patch.dict(sys.modules, {"ddgs": fake_ddgs}),
+            patch("public_sources.time.sleep", return_value=None),
+        ):
+            rows = public_sources.npi_secondary_enrichment(
+                [provider],
+                "dentist",
+                "Dallas, Texas",
+                5,
+                threading.Event(),
+                lambda *args, **kwargs: None,
+            )
+        self.assertEqual("https://janeexample.test", rows[0].website)
+        self.assertIn("secondary_web_discovery", rows[0].observations)
 
     def test_url_and_phone_merge_preserves_branches(self):
         merge_log = []

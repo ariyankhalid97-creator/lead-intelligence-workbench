@@ -19,6 +19,8 @@ Include the affected version, operating system, reproduction conditions, impact,
 - Local databases, Chrome profiles, exports, logs, and campaign content are excluded from Git.
 - Local AI is restricted to the Ollama loopback endpoint and refuses redirects.
 - Email sending remains approval-gated and uses the official Zoho Mail API.
+- Desktop updates are accepted only through the configured public GitHub release channel. Release artifacts should be code-signed before broad distribution.
+- Google Sheets write access, when implemented, must use user-approved OAuth with a narrow per-file scope; API keys and OAuth secrets must never be committed.
 
 This is a local research tool, not a hardened multi-user server. Do not expose its dashboard port to a LAN or the public internet.
 

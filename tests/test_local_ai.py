@@ -119,14 +119,36 @@ class LocalAITests(unittest.TestCase):
         self.assertIn("unavailable", result["message"])
 
     def test_email_classifier_reads_full_public_address_without_claiming_delivery(self):
-        output = {"classifications": [{"row": 0, "email": "jane@acme.test", "local_part": "jane", "type": "possible_direct"}]}
-        with patch.object(local_ai, "_request", side_effect=self.transport(output)) as request:
+        output = {
+            "classifications": [
+                {
+                    "row": 0,
+                    "email": "jane@acme.test",
+                    "local_part": "jane",
+                    "type": "possible_direct",
+                }
+            ]
+        }
+        with patch.object(
+            local_ai, "_request", side_effect=self.transport(output)
+        ) as request:
             result = local_ai.organize_email_locals(
-                [{"row": 0, "email": "jane@acme.test", "local_part": "jane", "business": "Acme"}],
+                [
+                    {
+                        "row": 0,
+                        "email": "jane@acme.test",
+                        "local_part": "jane",
+                        "business": "Acme",
+                    }
+                ],
                 self.model,
             )
         self.assertEqual("jane@acme.test", result["classifications"][0]["email"])
-        payload = next(call.args[1] for call in request.call_args_list if call.args[0] == "/api/chat")
+        payload = next(
+            call.args[1]
+            for call in request.call_args_list
+            if call.args[0] == "/api/chat"
+        )
         self.assertIn("jane@acme.test", payload["messages"][1]["content"])
         self.assertIn("cannot verify a mailbox", payload["messages"][0]["content"])
 
@@ -187,7 +209,7 @@ class LocalAITests(unittest.TestCase):
         )
         self.assertFalse(payload["stream"])
         self.assertFalse(payload["think"])
-        self.assertEqual(4096, payload["options"]["num_ctx"])
+        self.assertEqual(local_ai.DEFAULT_NUM_CTX, payload["options"]["num_ctx"])
         self.assertLessEqual(payload["options"]["num_predict"], 900)
         self.assertEqual("5m", payload["keep_alive"])
         self.assertNotIn("tools", payload)
@@ -564,19 +586,32 @@ class LocalAITests(unittest.TestCase):
             "2026-10-24T00:00:00+00:00",
         )
         output = evidence_compiler.deterministic_output(
-            "company-1", "operating-1", [claim], {}, "verify_public_sources", "Verify contact", [], False
+            "company-1",
+            "operating-1",
+            [claim],
+            {},
+            "verify_public_sources",
+            "Verify contact",
+            [],
+            False,
         )
-        output["compiled_claims"] = [{
-            "claim_type": "service_offering",
-            "statement": "Commercial roof repair is published.",
-            "verification_status": "verified_observation",
-            "confidence_score": 0.9,
-            "source_evidence_ids": [claim["evidence_id"]],
-            "verbatim_excerpt": claim["verbatim_excerpt"],
-        }]
+        output["compiled_claims"] = [
+            {
+                "claim_type": "service_offering",
+                "statement": "Commercial roof repair is published.",
+                "verification_status": "verified_observation",
+                "confidence_score": 0.9,
+                "source_evidence_ids": [claim["evidence_id"]],
+                "verbatim_excerpt": claim["verbatim_excerpt"],
+            }
+        ]
         with patch.object(local_ai, "_request", side_effect=self.transport(output)):
-            result = local_ai.compile_intelligence([claim], "company-1", "operating-1", {}, self.model)
-        self.assertEqual(claim["evidence_id"], result["compiled_claims"][0]["source_evidence_ids"][0])
+            result = local_ai.compile_intelligence(
+                [claim], "company-1", "operating-1", {}, self.model
+            )
+        self.assertEqual(
+            claim["evidence_id"], result["compiled_claims"][0]["source_evidence_ids"][0]
+        )
 
 
 if __name__ == "__main__":

@@ -31,8 +31,11 @@ The app helps you move through one continuous process:
 - **Optional local AI:** automatically detects compatible local Ollama chat models and uses them for phrase suggestions, evidence summaries, and draft assistance.
 - **Evidence-first records:** observed facts, search snippets, inferred classifications, and unknown fields remain distinguishable.
 - **Durable diagnostics:** exact queries, provider failures, stop reasons, CAPTCHA pauses, timings, and duplicate decisions are retained for review.
+- **Entity-safe normalization:** directory boilerplate, location suffixes, and pipe-delimited host labels are removed before deduplication; probable multi-listing containers are rejected.
+- **NPI website waterfall:** relevant registry providers receive a second exact-name/taxonomy/city lookup, followed by published website-contact extraction.
 - **Safe outreach controls:** reusable templates, per-lead AI drafts, suppression checks, daily limits, randomized respectful pacing, and explicit approval before Zoho sends.
 - **Local desktop experience:** borderless, resizable Electron interface with built-in back, forward, refresh, minimize, maximize, and close controls.
+- **GitHub updates and repair:** installed builds can check the official release channel, download a future update, and rebuild the local Python runtime without deleting saved research.
 
 ## Source waterfall
 
@@ -45,7 +48,7 @@ Lead Extractor fans out to applicable sources automatically. A source failure do
 | Public web discovery | Websites and public profiles | Uses bounded queries and keeps source URLs |
 | Business websites | Published contacts and evidence | Respects `robots.txt`, page limits, timeouts, and request pacing |
 | Wikidata | Structured organization candidates | Best-effort public entity discovery |
-| US NPI Registry | Healthcare providers | Used only when the niche maps to a relevant healthcare taxonomy |
+| US NPI Registry | Healthcare providers | Used only for mapped healthcare taxonomies; a bounded second pass looks for the provider's practice website and published contacts |
 | Clutch / GoodFirms | B2B service-company profiles | Public profile discovery; directory claims remain unverified until corroborated |
 | YC / Product Hunt / BetaList | Startup and product signals | Activated for relevant startup, software, and product niches |
 | Indeed / RemoteOK / Wellfound | Hiring and company signals | Attached to an existing company as supporting evidence, not emitted as a separate lead |
@@ -105,6 +108,8 @@ npm run build:windows
 ```
 
 The signed-or-unsigned NSIS installer is written to `release/`. Public distribution should use code signing; an unsigned local build may trigger Windows SmartScreen.
+
+Future installed releases use the repository's GitHub release feed. Publish the generated installer and `latest.yml` together; the desktop app will never download an update from an arbitrary URL.
 
 ## How the research engine reasons
 
@@ -198,6 +203,8 @@ npm audit
 - Browser automation can encounter CAPTCHAs or security checkpoints; the app pauses for the user instead of bypassing them.
 - Website crawling is deliberately bounded and may miss content rendered behind complex interactions.
 - “Free” describes the software and its built-in source strategy; network providers may change policies or limits.
+
+The proposed multi-country directory, geography, Google Sheets, and LinkedIn-assisted expansion is documented in [Phase 2 roadmap](docs/PHASE_2_ROADMAP.md). It deliberately distinguishes open registries from paid/licensed records and uses Google OAuth rather than embedded keys.
 
 ## Responsible use
 

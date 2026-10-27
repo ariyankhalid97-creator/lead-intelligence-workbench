@@ -87,6 +87,100 @@ GENERIC_EMAIL_PREFIXES = (
     "booking@",
 )
 
+ENTITY_NAME_MAX_LENGTH = 80
+ENTITY_NAME_PHONE_RE = re.compile(
+    r"(?<!\d)(?:\(?(?:\d{3})\)?[-.\s])\d{3}[-.\s]\d{4}(?!\d)"
+)
+_TITLE_DIRECTORY_SUFFIX_RE = re.compile(
+    r"\s*(?:[-–—:]\s*)?(?:"
+    r"chamber\s+of\s+commerce|business\s+directory|company\s+profile|"
+    r"yellow\s+pages|white\s+pages|yelp|mapquest|bbb(?:\s+business\s+profile)?|"
+    r"linkedin|facebook|instagram|official\s+site|home\s+page"
+    r")(?:\s+.*)?$",
+    re.IGNORECASE,
+)
+_TITLE_LOCATION_SUFFIX_RE = re.compile(
+    r"\s+(?:in|near|serving)\s+[A-Za-z][A-Za-z .'-]{1,55}"
+    r"(?:,\s*(?:[A-Z]{2}|[A-Za-z][A-Za-z .'-]{2,30}))?"
+    r"(?:\s*(?:[-–—|:]|\.{2,}).*)?$",
+    re.IGNORECASE,
+)
+
+
+def normalize_business_name(value: str, city: str = "", state: str = "") -> str:
+    """Turn search/directory titles into a bounded entity name before matching."""
+    name = html.unescape(str(value or ""))
+    name = re.sub(r"[\r\n\t]+", " ", name)
+    name = re.sub(r"\s+", " ", name).strip(" \"'`|•–—-")
+    if not name:
+        return ""
+
+    # Directory titles nearly always put the entity first and the host label
+    # after a pipe/bullet.  Removing that suffix before deduplication prevents
+    # the same business becoming one record per directory.
+    name = re.split(r"\s*[|•]\s*", name, maxsplit=1)[0].strip()
+    previous = None
+    while name and name != previous:
+        previous = name
+        name = _TITLE_DIRECTORY_SUFFIX_RE.sub("", name).strip(" ,:|–—-")
+        name = _TITLE_LOCATION_SUFFIX_RE.sub("", name).strip(" ,:|–—-")
+
+    # A known query city/state may appear without the word "in".
+    location_parts = [
+        re.escape(part.strip())
+        for part in (city, state)
+        if isinstance(part, str) and part.strip()
+    ]
+    if location_parts:
+        location = r"\s*(?:,|[-–—])?\s*".join(location_parts)
+        name = re.sub(
+            rf"\s*(?:,|[-–—])\s*{location}(?:\s*\.{{2,}}.*)?$",
+            "",
+            name,
+            flags=re.IGNORECASE,
+        ).strip(" ,:|–—-")
+
+    name = re.sub(r"\s*(?:\.{2,}|…)+\s*$", "", name).strip()
+    if len(name) > ENTITY_NAME_MAX_LENGTH:
+        # Split a visible multi-listing wrapper only when it yields one clean,
+        # bounded leading entity.  Otherwise the container is rejected below.
+        first = re.split(r"\s*(?:;| / |\\|\n)\s*", name, maxsplit=1)[0].strip()
+        if 1 < len(first) <= ENTITY_NAME_MAX_LENGTH:
+            name = first
+    return re.sub(r"\s+", " ", name).strip()
+
+
+def valid_entity_name(value: str) -> bool:
+    name = str(value or "").strip()
+    return (
+        bool(name)
+        and len(name) <= ENTITY_NAME_MAX_LENGTH
+        and len(ENTITY_NAME_PHONE_RE.findall(name)) < 2
+    )
+
+
+def normalize_lead_entity(lead: "Lead") -> bool:
+    """Normalize a lead name and reject probable multi-listing containers."""
+    original = str(getattr(lead, "name", "") or "")
+    lead.name = normalize_business_name(original, getattr(lead, "city", ""))
+    if valid_entity_name(lead.name):
+        return True
+    try:
+        flags = json.loads(lead.quality_flags or "[]")
+    except (TypeError, ValueError):
+        flags = []
+    reason = (
+        "multi_listing_phone_container"
+        if len(ENTITY_NAME_PHONE_RE.findall(original)) >= 2
+        else "entity_name_over_80_characters"
+        if len(lead.name or original) > ENTITY_NAME_MAX_LENGTH
+        else "missing_entity_name"
+    )
+    if reason not in flags:
+        flags.append(reason)
+    lead.quality_flags = json.dumps(flags, ensure_ascii=False)
+    return False
+
 
 @dataclass
 class Lead:
@@ -145,6 +239,11 @@ class Lead:
     verification: str = "{}"
     email_quality: str = "{}"
     duplicate_summary: str = "[]"
+
+    def __post_init__(self) -> None:
+        # Creation-time cleanup covers every scraper; deduplication repeats the
+        # guard after later enrichment or title repair mutates a record.
+        normalize_lead_entity(self)
 
     def identity(self) -> str:
         if self.source_id:
@@ -531,9 +630,13 @@ class Store:
         self.db.close()
 
 
-def deduplicate(leads: Iterable[Lead], merge_log: list[dict] | None = None) -> list[Lead]:
+def deduplicate(
+    leads: Iterable[Lead], merge_log: list[dict] | None = None
+) -> list[Lead]:
     merged: dict[str, Lead] = {}
     for lead in leads:
+        if not normalize_lead_entity(lead):
+            continue
         # Match same-domain records only when branch location is compatible.
         host = (
             urlparse(normalize_website(lead.website))
@@ -580,8 +683,12 @@ def deduplicate(leads: Iterable[Lead], merge_log: list[dict] | None = None) -> l
                         "kept_name": old.name,
                         "merged_name": lead.name,
                         "reason": merge_reason or "same_identity",
-                        "phone": phone if merge_reason == "same_normalized_phone" else "",
-                        "domain": host if merge_reason == "same_normalized_domain" else "",
+                        "phone": phone
+                        if merge_reason == "same_normalized_phone"
+                        else "",
+                        "domain": host
+                        if merge_reason == "same_normalized_domain"
+                        else "",
                         "kept_source": old.source,
                         "merged_source": lead.source,
                     }

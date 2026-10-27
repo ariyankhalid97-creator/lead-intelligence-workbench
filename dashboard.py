@@ -81,13 +81,17 @@ class Handler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         path = parsed.path
         if path == "/api/health":
-            chrome_preference = os.getenv("LEAD_EXTRACTOR_CHROME_INTEGRATION", "1") != "0"
-            self.send({
-                "ok": True,
-                "version": "2.0",
-                "sources": engine.catalog(),
-                "preferences": {"chrome_integration": chrome_preference},
-            })
+            chrome_preference = (
+                os.getenv("LEAD_EXTRACTOR_CHROME_INTEGRATION", "1") != "0"
+            )
+            self.send(
+                {
+                    "ok": True,
+                    "version": "2.0",
+                    "sources": engine.catalog(),
+                    "preferences": {"chrome_integration": chrome_preference},
+                }
+            )
             return
         if path == "/api/ai/status":
             self.send(local_ai.status())
@@ -104,6 +108,13 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/intelligence/queue":
             self.send(intelligence.queue())
             return
+        if path == "/api/intelligence/ai-teaching":
+            niche = parse_qs(parsed.query).get("niche", [""])[0]
+            try:
+                self.send(intelligence.ai_teaching_view(niche))
+            except ValueError as exc:
+                self.send({"error": str(exc)}, 400)
+            return
         if path == "/api/intelligence/niche-packs":
             self.send(intelligence.niche_packs())
             return
@@ -115,10 +126,14 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path.startswith("/api/intelligence/entities/"):
             item = intelligence.entity(path.split("/")[-1])
-            self.send(item or {"error": "Company memory not found"}, 200 if item else 404)
+            self.send(
+                item or {"error": "Company memory not found"}, 200 if item else 404
+            )
             return
         if path == "/api/outreach/zoho/connect":
-            callback = f"http://127.0.0.1:{self.server.server_port}/api/outreach/zoho/callback"
+            callback = (
+                f"http://127.0.0.1:{self.server.server_port}/api/outreach/zoho/callback"
+            )
             try:
                 destination = outreach.oauth_authorize_url(callback)
                 self.send_response(302)
@@ -130,13 +145,21 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path == "/api/outreach/zoho/callback":
             query = parse_qs(parsed.query)
-            callback = f"http://127.0.0.1:{self.server.server_port}/api/outreach/zoho/callback"
+            callback = (
+                f"http://127.0.0.1:{self.server.server_port}/api/outreach/zoho/callback"
+            )
             try:
-                address = outreach.oauth_callback(query.get("code", [""])[0], query.get("state", [""])[0], callback)
+                address = outreach.oauth_callback(
+                    query.get("code", [""])[0], query.get("state", [""])[0], callback
+                )
                 body = f"<!doctype html><meta charset='utf-8'><title>Zoho connected</title><h1>Zoho connected</h1><p>{html.escape(address)} is now linked. Return to Lead Finder; this window can be closed.</p>".encode()
                 self.send(body, mime="text/html")
             except Exception as exc:
-                self.send(f"<!doctype html><meta charset='utf-8'><title>Zoho connection failed</title><h1>Zoho connection failed</h1><p>{html.escape(str(exc))}</p>".encode(), 400, "text/html")
+                self.send(
+                    f"<!doctype html><meta charset='utf-8'><title>Zoho connection failed</title><h1>Zoho connection failed</h1><p>{html.escape(str(exc))}</p>".encode(),
+                    400,
+                    "text/html",
+                )
             return
         if path == "/api/outreach/templates":
             self.send(outreach.templates())
@@ -146,7 +169,9 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path.startswith("/api/outreach/campaigns/"):
             campaign = outreach._campaign(path.split("/")[-1])
-            self.send(campaign or {"error": "Campaign not found"}, 200 if campaign else 404)
+            self.send(
+                campaign or {"error": "Campaign not found"}, 200 if campaign else 404
+            )
             return
         if path.startswith("/api/ai/tasks/"):
             task = ai_tasks.get_task(path.split("/")[-1])
@@ -154,10 +179,14 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path.startswith("/api/verification/tasks/"):
             task = verification.get_task(path.split("/")[-1])
-            self.send(task or {"error": "Verification task not found"}, 200 if task else 404)
+            self.send(
+                task or {"error": "Verification task not found"}, 200 if task else 404
+            )
             return
         if path == "/api/workflows/current":
-            self.send(workflow.current(parse_qs(parsed.query).get("job_id", [""])[0]) or {})
+            self.send(
+                workflow.current(parse_qs(parsed.query).get("job_id", [""])[0]) or {}
+            )
             return
         if path.startswith("/api/workflows/"):
             task = workflow.get_task(path.split("/")[-1])
@@ -251,7 +280,11 @@ class Handler(BaseHTTPRequestHandler):
                 self.send(browser_session.open_service(params.get("service", "all")))
                 return
             if self.path == "/api/browser/open-url":
-                self.send(browser_session.open_url(params.get("url", ""), params.get("company_id", "")))
+                self.send(
+                    browser_session.open_url(
+                        params.get("url", ""), params.get("company_id", "")
+                    )
+                )
                 return
             if self.path == "/api/browser/preferences":
                 self.send(browser_session.set_preferences(params))
@@ -262,6 +295,20 @@ class Handler(BaseHTTPRequestHandler):
             if self.path == "/api/intelligence/outcomes":
                 self.send(intelligence.record_outcome(params), 201)
                 return
+            if self.path == "/api/intelligence/ai-teaching":
+                self.send(intelligence.save_ai_teaching(params), 201)
+                return
+            if self.path == "/api/intelligence/ai-terms":
+                self.send(
+                    intelligence.approve_ai_terms(
+                        params.get("niche"),
+                        params.get("phrases"),
+                        params.get("model", ""),
+                        bool(params.get("accepted", True)),
+                    ),
+                    201,
+                )
+                return
             if self.path == "/api/intelligence/niche-packs":
                 self.send({"slug": intelligence.save_niche_pack(params)}, 201)
                 return
@@ -269,16 +316,41 @@ class Handler(BaseHTTPRequestHandler):
                 self.send({"id": intelligence.browser_checkpoint(params)}, 201)
                 return
             if self.path == "/api/intelligence/dnc":
-                self.send(intelligence.add_dnc(params.get("scope", "email"), params.get("value", ""), params.get("reason", "Manual do-not-contact")), 201)
+                self.send(
+                    intelligence.add_dnc(
+                        params.get("scope", "email"),
+                        params.get("value", ""),
+                        params.get("reason", "Manual do-not-contact"),
+                    ),
+                    201,
+                )
                 return
             if self.path == "/api/intelligence/email-verifications":
                 self.send(intelligence.record_email_verification(params), 201)
                 return
             if self.path == "/api/outreach/sequences":
-                self.send({"id": sequence_engine.create(params.get("id", ""), params.get("steps", []))}, 201)
+                self.send(
+                    {
+                        "id": sequence_engine.create(
+                            params.get("id", ""), params.get("steps", [])
+                        )
+                    },
+                    201,
+                )
                 return
             if self.path == "/api/outreach/sequences/enroll":
-                self.send({"id": sequence_engine.enroll(params.get("sequence_id", ""), params.get("campaign_id", ""), params.get("company_id", ""), params.get("operating_entity_id", ""), params.get("email", ""))}, 201)
+                self.send(
+                    {
+                        "id": sequence_engine.enroll(
+                            params.get("sequence_id", ""),
+                            params.get("campaign_id", ""),
+                            params.get("company_id", ""),
+                            params.get("operating_entity_id", ""),
+                            params.get("email", ""),
+                        )
+                    },
+                    201,
+                )
                 return
             if self.path == "/api/outreach/templates":
                 self.send({"id": outreach.save_template(params)}, 201)
@@ -294,24 +366,40 @@ class Handler(BaseHTTPRequestHandler):
             if self.path == "/api/outreach/campaigns":
                 self.send({"id": outreach.create_campaign(params)}, 201)
                 return
-            if self.path.startswith("/api/outreach/campaigns/") and self.path.endswith("/draft"):
+            if self.path.startswith("/api/outreach/campaigns/") and self.path.endswith(
+                "/draft"
+            ):
                 outreach.resume_ai(self.path.split("/")[-2])
                 self.send({"drafting": True}, 202)
                 return
-            if self.path.startswith("/api/outreach/campaigns/") and self.path.endswith("/start"):
-                outreach.start(self.path.split("/")[-2], params.get("confirmation") is True)
+            if self.path.startswith("/api/outreach/campaigns/") and self.path.endswith(
+                "/start"
+            ):
+                outreach.start(
+                    self.path.split("/")[-2], params.get("confirmation") is True
+                )
                 self.send({"started": True}, 202)
                 return
-            if self.path.startswith("/api/outreach/campaigns/") and self.path.endswith("/pause"):
+            if self.path.startswith("/api/outreach/campaigns/") and self.path.endswith(
+                "/pause"
+            ):
                 self.send({"pause_requested": outreach.pause(self.path.split("/")[-2])})
                 return
             if self.path == "/api/outreach/suppressions":
-                outreach.suppress(params.get("email", ""), params.get("reason", "Manual suppression"))
+                outreach.suppress(
+                    params.get("email", ""), params.get("reason", "Manual suppression")
+                )
                 self.send({"suppressed": True}, 201)
                 return
-            if self.path.startswith("/api/verification/tasks/") and self.path.endswith("/cancel"):
+            if self.path.startswith("/api/verification/tasks/") and self.path.endswith(
+                "/cancel"
+            ):
                 self.send(
-                    {"cancel_requested": verification.cancel_task(self.path.split("/")[-2])}
+                    {
+                        "cancel_requested": verification.cancel_task(
+                            self.path.split("/")[-2]
+                        )
+                    }
                 )
                 return
             if self.path.startswith("/api/ai/tasks/") and self.path.endswith("/cancel"):
@@ -319,8 +407,12 @@ class Handler(BaseHTTPRequestHandler):
                     {"cancel_requested": ai_tasks.cancel_task(self.path.split("/")[-2])}
                 )
                 return
-            if self.path.startswith("/api/workflows/") and self.path.endswith("/cancel"):
-                self.send({"cancel_requested": workflow.cancel(self.path.split("/")[-2])})
+            if self.path.startswith("/api/workflows/") and self.path.endswith(
+                "/cancel"
+            ):
+                self.send(
+                    {"cancel_requested": workflow.cancel(self.path.split("/")[-2])}
+                )
                 return
             if self.path == "/api/search":
                 self.send({"id": engine.start(params)}, 202)

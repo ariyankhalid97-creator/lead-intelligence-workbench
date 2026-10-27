@@ -10,6 +10,7 @@ import uuid
 from dataclasses import fields
 
 import engine
+import intelligence
 import leadfinder as lf
 import local_ai
 from contacts import now
@@ -94,10 +95,14 @@ def validate(params):
         if not isinstance(job_id, str) or not re.fullmatch(r"[a-f0-9]{32}", job_id):
             raise ValueError("Open a saved search before compiling intelligence")
         if scope not in ("all", "verified", "qualified"):
-            raise ValueError("Choose all retained leads, verified leads, or qualified verified leads")
+            raise ValueError(
+                "Choose all retained leads, verified leads, or qualified verified leads"
+            )
         saved = engine.get_job(job_id, events=False)
         if not saved or saved.get("status") in ("queued", "running", "waiting"):
-            raise ValueError("Wait for the search to finish before compiling intelligence")
+            raise ValueError(
+                "Wait for the search to finish before compiling intelligence"
+            )
         chosen.update(job_id=job_id, scope=scope)
     else:
         job_id, index = params.get("job_id"), params.get("row_index")
@@ -128,15 +133,32 @@ def validate(params):
 
 def _ledger(company_id):
     with engine.connection() as conn:
-        columns = ("evidence_id", "field", "value", "source_type", "source_url", "captured_at", "verbatim_excerpt", "authority_weight", "freshness_weight", "trust_score")
-        return [dict(zip(columns, item)) for item in conn.execute(
-            "SELECT evidence_id,field,value,source_type,source_url,captured_at,verbatim_excerpt,authority_weight,freshness_weight,trust_score FROM intelligence_evidence_claims WHERE company_id=? ORDER BY trust_score DESC LIMIT 80",
-            (company_id,),
-        )]
+        columns = (
+            "evidence_id",
+            "field",
+            "value",
+            "source_type",
+            "source_url",
+            "captured_at",
+            "verbatim_excerpt",
+            "authority_weight",
+            "freshness_weight",
+            "trust_score",
+        )
+        return [
+            dict(zip(columns, item))
+            for item in conn.execute(
+                "SELECT evidence_id,field,value,source_type,source_url,captured_at,verbatim_excerpt,authority_weight,freshness_weight,trust_score FROM intelligence_evidence_claims WHERE company_id=? ORDER BY trust_score DESC LIMIT 80",
+                (company_id,),
+            )
+        ]
 
 
 def _evidence_fingerprint(ledger):
-    value = [(item.get("evidence_id"), item.get("trust_score"), item.get("captured_at")) for item in ledger]
+    value = [
+        (item.get("evidence_id"), item.get("trust_score"), item.get("captured_at"))
+        for item in ledger
+    ]
     return hashlib.sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()
 
 
@@ -148,14 +170,24 @@ def _compile_saved_row(job_id, row_index, model, cancel, force=False):
         raise ValueError("Saved lead changed. Reopen the search and retry.")
     row = saved["rows"][row_index]
     company_id = row.get("entity_id", "")
+    niche = (saved.get("params") or {}).get("niche", "")
+    teaching = intelligence.ensure_niche_pack(niche) if niche else None
     ledger = _ledger(company_id)
     fingerprint = _evidence_fingerprint(ledger)
     try:
         prior_meta = json.loads(row.get("ai_compiler_metadata") or "{}")
     except (TypeError, ValueError):
         prior_meta = {}
-    if not force and prior_meta.get("evidence_fingerprint") == fingerprint and row.get("ai_compiler_output"):
-        return {"status": "skipped_unchanged", "row_index": row_index, "company_id": company_id}
+    if (
+        not force
+        and prior_meta.get("evidence_fingerprint") == fingerprint
+        and row.get("ai_compiler_output")
+    ):
+        return {
+            "status": "skipped_unchanged",
+            "row_index": row_index,
+            "company_id": company_id,
+        }
     error = ""
     errors = []
     retries = 0
@@ -168,14 +200,23 @@ def _compile_saved_row(job_id, row_index, model, cancel, force=False):
                 ledger,
                 company_id,
                 row.get("operating_entity_id", ""),
-                {"next_best_action": row.get("next_best_action", ""), "contact_confidence": row.get("contact_confidence", 0)},
+                {
+                    "next_best_action": row.get("next_best_action", ""),
+                    "contact_confidence": row.get("contact_confidence", 0),
+                },
                 model,
                 cancel,
+                teaching=teaching,
+                niche=niche,
             )
             break
         except Exception as exc:
             errors.append(str(exc)[:500])
-            failure_kind = "validation_rejected" if isinstance(exc, ValueError) else "model_or_transport_failure"
+            failure_kind = (
+                "validation_rejected"
+                if isinstance(exc, ValueError)
+                else "model_or_transport_failure"
+            )
             if attempt == 0 and not cancel.is_set():
                 retries += 1
                 continue
@@ -188,30 +229,57 @@ def _compile_saved_row(job_id, row_index, model, cancel, force=False):
             result = {}
         if not result:
             result = evidence_compiler.deterministic_output(
-                company_id, row.get("operating_entity_id", ""), ledger, row,
+                company_id,
+                row.get("operating_entity_id", ""),
+                ledger,
+                row,
                 row.get("next_best_action", "manual_browser_review"),
-                row.get("next_action_reason", "Local AI did not return a valid evidence-bound result."),
-                [], False,
+                row.get(
+                    "next_action_reason",
+                    "Local AI did not return a valid evidence-bound result.",
+                ),
+                [],
+                False,
             )
         evidence_compiler.validate_output(result, ledger)
     if cancel.is_set():
         raise ValueError("AI compiler cancelled; saved intelligence was not changed")
     with REVIEW_LOCK:
         latest = engine.get_job(job_id, events=False)
-        if not latest or row_index >= len(latest.get("rows", [])) or _fingerprint(latest["rows"][row_index]) != _fingerprint(row):
+        if (
+            not latest
+            or row_index >= len(latest.get("rows", []))
+            or _fingerprint(latest["rows"][row_index]) != _fingerprint(row)
+        ):
             raise ValueError("Saved lead changed. Reopen the search and retry.")
         latest_row = latest["rows"][row_index]
         latest_row["ai_compiler_output"] = json.dumps(result, ensure_ascii=False)
-        latest_row["ai_compiler_metadata"] = json.dumps({
-            "model": model if mode == "local_ai_validated" else "deterministic rules",
-            "generated_at": now(),
-            "validation": "all_citations_excerpts_and_semantic_guards_passed" if mode == "local_ai_validated" else "deterministic_fallback_no_ai_interpretation",
-            "mode": mode,
-            "error": error,
-            "evidence_fingerprint": fingerprint,
-        }, ensure_ascii=False)
+        latest_row["ai_compiler_metadata"] = json.dumps(
+            {
+                "model": model
+                if mode == "local_ai_validated"
+                else "deterministic rules",
+                "generated_at": now(),
+                "validation": "all_citations_excerpts_and_semantic_guards_passed"
+                if mode == "local_ai_validated"
+                else "deterministic_fallback_no_ai_interpretation",
+                "mode": mode,
+                "error": error,
+                "evidence_fingerprint": fingerprint,
+            },
+            ensure_ascii=False,
+        )
         engine.save(latest)
-    return {"status": "complete" if mode == "local_ai_validated" else "fallback", "row_index": row_index, "company_id": company_id, "mode": mode, "error": error, "failure_kind": failure_kind, "retries": retries, "output": result}
+    return {
+        "status": "complete" if mode == "local_ai_validated" else "fallback",
+        "row_index": row_index,
+        "company_id": company_id,
+        "mode": mode,
+        "error": error,
+        "failure_kind": failure_kind,
+        "retries": retries,
+        "output": result,
+    }
 
 
 def start(params):
@@ -289,10 +357,15 @@ def run(task, cancel):
             model=params["model"],
         )
         if params["task"] == "plan":
-            import intelligence
             compiled_terms = intelligence.compiled_search_terms(params["niche"])
+            teaching = intelligence.ensure_niche_pack(params["niche"])
             result = local_ai.plan(
-                params["niche"], params["locations"], params["model"], cancel=cancel, observed_terms=compiled_terms
+                params["niche"],
+                params["locations"],
+                params["model"],
+                cancel=cancel,
+                observed_terms=compiled_terms,
+                teaching=teaching,
             )
             if result.get("status") in ("error", "cancelled"):
                 raise ValueError(
@@ -314,8 +387,15 @@ def run(task, cancel):
                 raise ValueError("Saved lead changed. Reopen the lead and try again.")
             allowed = {f.name for f in fields(lf.Lead)}
             lead = lf.Lead(**{k: v for k, v in row.items() if k in allowed})
+            niche = (saved.get("params") or {}).get("niche", "")
+            teaching = intelligence.ensure_niche_pack(niche) if niche else None
             result = local_ai.review(
-                lead, params["model"], params["offer"], cancel=cancel
+                lead,
+                params["model"],
+                params["offer"],
+                cancel=cancel,
+                teaching=teaching,
+                niche=niche,
             )
             if result.get("analysis", {}).get("status") in ("error", "cancelled"):
                 raise ValueError(
@@ -344,9 +424,17 @@ def run(task, cancel):
                 latest_row["ai_draft"] = json.dumps(result["draft"], ensure_ascii=False)
                 engine.save(latest)
         elif params["task"] == "compile":
-            result = _compile_saved_row(job_id, params["row_index"], params["model"], cancel, force=True)
+            result = _compile_saved_row(
+                job_id, params["row_index"], params["model"], cancel, force=True
+            )
             if result.get("status") == "fallback":
-                _log(job_id, "warning", "Local AI compiler rejected or failed; deterministic fallback saved", row_index=params["row_index"], error=result.get("error", ""))
+                _log(
+                    job_id,
+                    "warning",
+                    "Local AI compiler rejected or failed; deterministic fallback saved",
+                    row_index=params["row_index"],
+                    error=result.get("error", ""),
+                )
         else:
             saved = engine.get_job(job_id, events=False)
             indices = []
@@ -358,34 +446,81 @@ def run(task, cancel):
                         report = {}
                     if report.get("status") != "complete":
                         continue
-                if params["scope"] == "qualified" and row.get("match_status") == "candidate":
+                if (
+                    params["scope"] == "qualified"
+                    and row.get("match_status") == "candidate"
+                ):
                     continue
                 indices.append(index)
-            task.update(total=len(indices), completed=0, failed=0, fallback=0, rejected=0, retries=0, skipped=0, items=[])
+            task.update(
+                total=len(indices),
+                completed=0,
+                failed=0,
+                fallback=0,
+                rejected=0,
+                retries=0,
+                skipped=0,
+                items=[],
+            )
             _save(task)
             for position, index in enumerate(indices, 1):
                 if cancel.is_set():
-                    raise ValueError("Batch compilation cancelled; completed leads were retained")
-                task.update(message=f"Compiling lead {position} of {len(indices)}", current_row=index)
+                    raise ValueError(
+                        "Batch compilation cancelled; completed leads were retained"
+                    )
+                task.update(
+                    message=f"Compiling lead {position} of {len(indices)}",
+                    current_row=index,
+                )
                 _save(task)
                 try:
                     item = _compile_saved_row(job_id, index, params["model"], cancel)
                     state = item.get("status", "complete")
                     task["skipped"] += int(state == "skipped_unchanged")
                     task["fallback"] += int(state == "fallback")
-                    task["rejected"] += int(item.get("failure_kind") == "validation_rejected")
+                    task["rejected"] += int(
+                        item.get("failure_kind") == "validation_rejected"
+                    )
                     task["retries"] += int(item.get("retries", 0))
                     task["completed"] += int(state in ("complete", "fallback"))
                     if state == "fallback":
-                        _log(job_id, "warning", "Batch AI compiler used deterministic fallback", row_index=index, error=item.get("error", ""))
+                        _log(
+                            job_id,
+                            "warning",
+                            "Batch AI compiler used deterministic fallback",
+                            row_index=index,
+                            error=item.get("error", ""),
+                        )
                 except Exception as exc:
-                    item = {"status": "failed", "row_index": index, "error": str(exc)[:500]}
+                    item = {
+                        "status": "failed",
+                        "row_index": index,
+                        "error": str(exc)[:500],
+                    }
                     task["failed"] += 1
-                    _log(job_id, "warning", "Batch AI compiler lead failed", row_index=index, error=str(exc)[:500])
+                    _log(
+                        job_id,
+                        "warning",
+                        "Batch AI compiler lead failed",
+                        row_index=index,
+                        error=str(exc)[:500],
+                    )
                 task["items"] = (task.get("items", []) + [item])[-100:]
                 task["progress"] = int(100 * position / max(1, len(indices)))
                 _save(task)
-            result = {key: task.get(key, 0) for key in ("total", "completed", "fallback", "rejected", "retries", "skipped", "failed", "progress")}
+            result = {
+                key: task.get(key, 0)
+                for key in (
+                    "total",
+                    "completed",
+                    "fallback",
+                    "rejected",
+                    "retries",
+                    "skipped",
+                    "failed",
+                    "progress",
+                )
+            }
         if cancel.is_set():
             raise ValueError("AI request cancelled")
         task.update(

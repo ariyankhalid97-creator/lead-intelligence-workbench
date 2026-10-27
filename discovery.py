@@ -6,9 +6,15 @@ import re
 import threading
 import time
 from pathlib import Path
-from urllib.parse import quote, urlparse, parse_qs, unquote
+from urllib.parse import quote, urlparse, unquote
 
-from leadfinder import Lead, CATEGORY_FILTERS, normalize_website
+from leadfinder import (
+    Lead,
+    CATEGORY_FILTERS,
+    fetch,
+    normalize_business_name,
+    valid_entity_name,
+)
 import niche_catalog
 from research import platform_profile, add_observation
 
@@ -28,8 +34,19 @@ ALIASES = {
     "electrician": ["electrician", "electrical contractor"],
     "landscaping": ["landscaper", "landscaping service", "lawn care"],
     "pest control": ["pest control", "exterminator"],
-    "food export": ["food exporters", "food export companies", "food product exporters", "food export services"],
-    "animal talent agencies": ["animal talent agencies", "animal actors agency", "pet talent agency", "animal casting agency", "animal talent management"],
+    "food export": [
+        "food exporters",
+        "food export companies",
+        "food product exporters",
+        "food export services",
+    ],
+    "animal talent agencies": [
+        "animal talent agencies",
+        "animal actors agency",
+        "pet talent agency",
+        "animal casting agency",
+        "animal talent management",
+    ],
 }
 CATEGORY_NAMES = {
     "roofing": "roofer",
@@ -61,6 +78,38 @@ DIRECTORY_HOSTS = (
     "chamberofcommerce.com",
 )
 
+NEGATIVE_MEDIA_HOSTS = (
+    "dallasnews.com",
+    "nytimes.com",
+    "washingtonpost.com",
+    "usatoday.com",
+    "reuters.com",
+    "apnews.com",
+    "cnn.com",
+    "foxnews.com",
+    "nbcnews.com",
+    "cbsnews.com",
+    "abcnews.go.com",
+    "newsweek.com",
+    "forbes.com",
+    "businessinsider.com",
+    "legacy.com",
+    "dignitymemorial.com",
+    "echovita.com",
+    "tributearchive.com",
+    "newspapers.com",
+)
+_MEDIA_DOMAIN_LABEL_RE = re.compile(
+    r"(?:^|[-.])(?:news|times|herald|tribune|gazette|observer|journal)(?:[-.]|$)",
+    re.IGNORECASE,
+)
+_BUSINESS_SCHEMA_RE = re.compile(
+    r"(?:schema\.org/(?:LocalBusiness|Organization)|"
+    r"[\"']@type[\"']\s*:\s*(?:[\"'](?:LocalBusiness|Organization)[\"']|"
+    r"\[[^\]]*[\"'](?:LocalBusiness|Organization)[\"']))",
+    re.IGNORECASE,
+)
+
 
 def is_directory(url):
     host = (urlparse(url).hostname or "").removeprefix("www.")
@@ -69,9 +118,34 @@ def is_directory(url):
     )
 
 
+def is_negative_media_domain(url: str) -> bool:
+    host = (urlparse(url).hostname or "").casefold().removeprefix("www.")
+    return any(
+        host == domain or host.endswith("." + domain) for domain in NEGATIVE_MEDIA_HOSTS
+    ) or bool(_MEDIA_DOMAIN_LABEL_RE.search(host))
+
+
+def has_explicit_business_schema(url: str) -> bool:
+    """Allow a media-domain result only when the page identifies an entity."""
+    try:
+        document = fetch(url, timeout=12, retries=0)[:750_000].decode(
+            "utf-8", errors="ignore"
+        )
+    except Exception:
+        return False
+    return bool(_BUSINESS_SCHEMA_RE.search(document))
+
+
 def repair_generic_name(lead: Lead) -> None:
     """Replace navigation-label search titles with an observed page brand."""
-    if lead.name.strip().casefold() not in {"about", "home", "contact", "for talent", "services", "our services"}:
+    if lead.name.strip().casefold() not in {
+        "about",
+        "home",
+        "contact",
+        "for talent",
+        "services",
+        "our services",
+    }:
         return
     try:
         observations = json.loads(lead.observations or "[]")
@@ -99,13 +173,27 @@ def _accepted_phrase(phrase: str, niche: str, curated: list[str]) -> tuple[bool,
     curated_set = {item.casefold() for item in curated}
     if normalized in curated_set:
         return True, "curated terminology"
-    if re.search(r"hood|kitchen\s+exhaust|restaurant\s+exhaust", base) and re.search(r"hood|exhaust", normalized) and re.search(r"clean|degreas|grease", normalized):
+    if (
+        re.search(r"hood|kitchen\s+exhaust|restaurant\s+exhaust", base)
+        and re.search(r"hood|exhaust", normalized)
+        and re.search(r"clean|degreas|grease", normalized)
+    ):
         return True, "specialist exhaust-cleaning terminology"
     if normalized in {f"{base} contractor", f"local {base}", f"independent {base}"}:
         return False, "generic modifier does not prove niche relevance"
-    base_words = {word for word in re.findall(r"[a-z0-9]+", base) if len(word) > 2 and word not in {"service", "services", "company", "companies"}}
+    base_words = {
+        word
+        for word in re.findall(r"[a-z0-9]+", base)
+        if len(word) > 2 and word not in {"service", "services", "company", "companies"}
+    }
     phrase_words = set(re.findall(r"[a-z0-9]+", normalized))
-    if base_words and not all(any(word.startswith(base_word[:4]) or base_word.startswith(word[:4]) for word in phrase_words) for base_word in base_words):
+    if base_words and not all(
+        any(
+            word.startswith(base_word[:4]) or base_word.startswith(word[:4])
+            for word in phrase_words
+        )
+        for base_word in base_words
+    ):
         return False, "missing distinctive niche term"
     return True, "user-supplied terminology"
 
@@ -126,10 +214,9 @@ def plan(niche: str, custom: str = "") -> dict:
     starting = curated if key == "food export" else [niche.strip(), *curated]
     phrases = []
     rejected = []
-    for phrase in (
-        starting
-        + [x.strip() for x in re.split(r"[\n;]", custom) if x.strip()]
-    ):
+    for phrase in starting + [
+        x.strip() for x in re.split(r"[\n;]", custom) if x.strip()
+    ]:
         accepted, reason = _accepted_phrase(phrase, niche, curated)
         if not accepted:
             rejected.append({"phrase": phrase, "reason": reason})
@@ -170,16 +257,22 @@ def relevance(lead: Lead, search_plan: dict, location: str, content: str = "") -
     text = " ".join((name, lead.category, content, page_text)).casefold()
     phrases = [x.casefold() for x in search_plan["phrases"]]
     animal_talent_niche = any(
-        "animal talent" in phrase or "animal casting" in phrase or "pet talent" in phrase
+        "animal talent" in phrase
+        or "animal casting" in phrase
+        or "pet talent" in phrase
         for phrase in phrases
     )
     if animal_talent_niche:
         animal_pattern = r"\b(?:animal|animals|pet|pets|dog|dogs|canine|k9)\b"
         talent_pattern = r"\b(?:talent|casting|actor|actors|model|models|modeling)\b"
-        if re.search(animal_pattern, page_text, re.I) and re.search(talent_pattern, page_text, re.I):
+        if re.search(animal_pattern, page_text, re.I) and re.search(
+            talent_pattern, page_text, re.I
+        ):
             lead.match_status = "service_match"
             lead.match_reason = "First-party page evidence mentions animals or pets together with talent, casting, acting, or modeling. Confirm geographic coverage separately."
-        elif re.search(animal_pattern, name, re.I) and re.search(r"talent|model|casting|entertainment", lead.category, re.I):
+        elif re.search(animal_pattern, name, re.I) and re.search(
+            r"talent|model|casting|entertainment", lead.category, re.I
+        ):
             lead.match_status = "category_match"
             lead.match_reason = "The public listing name is animal-focused and its listed category is talent/model/casting related; confirm services on the business website."
         else:
@@ -191,6 +284,7 @@ def relevance(lead: Lead, search_plan: dict, location: str, content: str = "") -
         for w in re.findall(r"[a-z]{3,}", phrases[0])
         if w not in ("service", "services", "contractor", "company")
     ]
+
     def contains_phrase(phrase):
         return bool(
             re.search(
@@ -297,6 +391,15 @@ def web_search(search_plan, location, limit, cancel, emit):
             url = result.get("href", "")
             host = (urlparse(url).hostname or "").removeprefix("www.")
             profile = platform_profile(url)
+            if is_negative_media_domain(url) and not has_explicit_business_schema(url):
+                emit(
+                    "web",
+                    "info",
+                    "News, obituary or general-media result excluded",
+                    url=url,
+                    reason="negative_media_domain_without_business_schema",
+                )
+                continue
             if query_plan.get("intent") == "profile" and not profile:
                 emit(
                     "web",
@@ -324,7 +427,17 @@ def web_search(search_plan, location, limit, cancel, emit):
             ):
                 continue
             seen.add(key)
-            title = re.split(r"\s[|–—]\s", result.get("title", ""))[0][:150]
+            title = normalize_business_name(result.get("title", ""), location)
+            if not valid_entity_name(title):
+                emit(
+                    "web",
+                    "info",
+                    "Probable multi-listing container excluded",
+                    url=url,
+                    reason="invalid_entity_name_boundary",
+                    title=str(result.get("title", ""))[:180],
+                )
+                continue
             lead = Lead(
                 name=title or host,
                 category="",
@@ -373,7 +486,11 @@ def browser_maps(search_plan, location, limit, cancel, emit, checkpoint, profile
             deadline = time.monotonic() + 180
             while time.monotonic() < deadline and not cancel.wait(1):
                 if not browser_session.search_checkpoint_status()["paused"]:
-                    emit("browser", "info", "Saved browser checkpoint cleared; Maps search resumed")
+                    emit(
+                        "browser",
+                        "info",
+                        "Saved browser checkpoint cleared; Maps search resumed",
+                    )
                     break
             else:
                 raise RuntimeError(
@@ -397,7 +514,13 @@ def browser_maps(search_plan, location, limit, cancel, emit, checkpoint, profile
             if challenged:
                 return True
             try:
-                return bool(re.search(r"unusual traffic|verify you are human|not a robot|captcha|access denied", page.locator("body").inner_text(timeout=1200)[:4000], re.I))
+                return bool(
+                    re.search(
+                        r"unusual traffic|verify you are human|not a robot|captcha|access denied",
+                        page.locator("body").inner_text(timeout=1200)[:4000],
+                        re.I,
+                    )
+                )
             except Exception:
                 return False
 
@@ -439,7 +562,10 @@ def browser_maps(search_plan, location, limit, cancel, emit, checkpoint, profile
     try:
         with sync_playwright() as p:
             shared_browser = None
-            if browser_session.running() and profile.resolve() == browser_session.PROFILE.resolve():
+            if (
+                browser_session.running()
+                and profile.resolve() == browser_session.PROFILE.resolve()
+            ):
                 shared_browser = p.chromium.connect_over_cdp(browser_session.DEBUG_BASE)
                 context = shared_browser.contexts[0]
                 emit(
@@ -530,20 +656,18 @@ def browser_maps(search_plan, location, limit, cancel, emit, checkpoint, profile
                         stale = stale + 1 if len(links) == before else 0
                         if len(links) >= link_threshold:
                             stop_reason = "link_threshold_reached"
-                            stop_detail = (
-                                f"Collected the per-query link threshold of {link_threshold}"
-                            )
+                            stop_detail = f"Collected the per-query link threshold of {link_threshold}"
                             break
                         if stale >= 3:
                             stop_reason = "no_new_links_after_three_scrolls"
-                            stop_detail = (
-                                "Three consecutive scroll checks added no new listing links"
-                            )
+                            stop_detail = "Three consecutive scroll checks added no new listing links"
                             break
                         feed = page.get_by_role("feed")
                         if not feed.count():
                             stop_reason = "results_feed_missing"
-                            stop_detail = "Google Maps did not expose a scrollable results feed"
+                            stop_detail = (
+                                "Google Maps did not expose a scrollable results feed"
+                            )
                             break
                         feed.evaluate("(e)=>e.scrollBy(0,900)")
                         if cancel.wait(1.1):

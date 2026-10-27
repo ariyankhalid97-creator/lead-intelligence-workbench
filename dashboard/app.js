@@ -41,6 +41,31 @@ function initializeDesktopShell() {
   });
 }
 initializeDesktopShell();
+function renderMaintenance(state = {}) {
+  if (!$("maintenanceStatus")) return;
+  $("maintenanceStatus").textContent =
+    state.message || "Ready to check GitHub releases.";
+  const busy = ["checking", "downloading", "repairing"].includes(state.status);
+  $("checkUpdates").disabled = busy;
+  $("repairRuntime").disabled = busy;
+  $("downloadUpdate").classList.toggle(
+    "hidden",
+    !state.updateAvailable || state.downloaded,
+  );
+  $("installUpdate").classList.toggle("hidden", !state.downloaded);
+  const showProgress = ["downloading", "repairing"].includes(state.status);
+  $("maintenanceProgress").classList.toggle("hidden", !showProgress);
+  $("maintenanceProgress").value = Number(state.progress || 0);
+}
+async function loadMaintenance() {
+  const desktop = window.leadFinderWindow;
+  if (!desktop?.maintenanceStatus) {
+    for (const id of ["checkUpdates", "repairRuntime"]) $(id).disabled = true;
+    return;
+  }
+  renderMaintenance(await desktop.maintenanceStatus());
+  desktop.onMaintenance(renderMaintenance);
+}
 const escapeHtml = (value) =>
   String(value ?? "").replace(
     /[&<>"']/g,
@@ -100,6 +125,8 @@ let aiConnection = null,
   aiBatchState = null,
   aiBatchPolling = false,
   aiProposal = null,
+  aiTeachingNiche = "",
+  aiTeachingTimer = null,
   detailContext = null;
 const aiReviewMessages = new Map();
 const active = (s) => ["queued", "running", "waiting"].includes(s);
@@ -181,6 +208,79 @@ async function loadAiStatus() {
     syncAiControls();
   }
 }
+async function loadAiTeaching() {
+  const niche = $("niche").value.trim();
+  if (niche.length < 2) {
+    aiTeachingNiche = "";
+    $("aiTeachTerms").value = "";
+    $("aiTeachAvoid").value = "";
+    $("aiTeachNotes").value = "";
+    $("aiTeachStatus").textContent =
+      "Enter a service to load or add teaching examples.";
+    return;
+  }
+  const requested = niche;
+  aiTeachingNiche = requested;
+  try {
+    const data = await aiApi(
+      "/api/intelligence/ai-teaching?niche=" + encodeURIComponent(requested),
+    );
+    if (aiTeachingNiche !== requested || $("niche").value.trim() !== requested)
+      return;
+    $("aiTeachTerms").value = (data.terms || []).join("\n");
+    $("aiTeachAvoid").value = (data.avoid || []).join("\n");
+    $("aiTeachNotes").value = data.notes || "";
+    const curated = (data.curated_terms || []).length;
+    $("aiTeachStatus").textContent =
+      `${(data.terms || []).length} saved phrase${(data.terms || []).length === 1 ? "" : "s"} · ${curated} curated example${curated === 1 ? "" : "s"}${data.updated_at ? ` · updated ${String(data.updated_at).slice(0, 10)}` : ""}`;
+  } catch (err) {
+    if (aiTeachingNiche === requested)
+      $("aiTeachStatus").textContent =
+        "Teaching memory is unavailable: " + err.message;
+  }
+}
+function listLines(value) {
+  return String(value || "")
+    .split(/\r?\n/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+function syncAiTeachFields() {
+  const niche = $("niche").value.trim();
+  if (niche !== aiTeachingNiche) {
+    clearTimeout(aiTeachingTimer);
+    aiTeachingTimer = setTimeout(loadAiTeaching, 450);
+  }
+}
+async function saveAiTeaching() {
+  const niche = $("niche").value.trim();
+  if (niche.length < 2) {
+    $("aiTeachStatus").textContent = "Enter a service first.";
+    return;
+  }
+  const button = $("aiTeachSave");
+  button.disabled = true;
+  $("aiTeachStatus").textContent = "Saving teaching memory…";
+  try {
+    const data = await api("/api/intelligence/ai-teaching", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        niche,
+        terms: listLines($("aiTeachTerms").value),
+        avoid: listLines($("aiTeachAvoid").value),
+        notes: $("aiTeachNotes").value,
+      }),
+    });
+    aiTeachingNiche = niche;
+    $("aiTeachStatus").textContent =
+      `Saved. Future phrase and intelligence prompts for ${data.niche} will use this guidance.`;
+  } catch (err) {
+    $("aiTeachStatus").textContent = err.message;
+  } finally {
+    button.disabled = false;
+  }
+}
 function syncCampaignModels() {
   const select = $("campaignAiModel");
   if (!select) return;
@@ -249,17 +349,25 @@ function batchScopeCount() {
   if (!job) return 0;
   const scope = $("aiBatchScope").value;
   if (scope === "all") return rows.length;
-  return rows.filter((row) =>
-    parseObject(row.verification).status === "complete" &&
-    (scope !== "qualified" || row.match_status !== "candidate"),
+  return rows.filter(
+    (row) =>
+      parseObject(row.verification).status === "complete" &&
+      (scope !== "qualified" || row.match_status !== "candidate"),
   ).length;
 }
 function renderAiBatch(state = aiBatchState) {
   const count = batchScopeCount();
-  $("aiBatchCompile").textContent = $("aiBatchScope").value === "all" ? `Compile all ${count} leads` : $("aiBatchScope").value === "qualified" ? `Compile ${count} qualified leads` : `Compile ${count} verified leads`;
+  $("aiBatchCompile").textContent =
+    $("aiBatchScope").value === "all"
+      ? `Compile all ${count} leads`
+      : $("aiBatchScope").value === "qualified"
+        ? `Compile ${count} qualified leads`
+        : `Compile ${count} verified leads`;
   $("aiBatchProgress").value = Number(state?.progress || 0);
   if (state) {
-    $("aiBatchStatus").textContent = state.message || `${state.status || "working"} · ${state.completed || 0}/${state.total || count}`;
+    $("aiBatchStatus").textContent =
+      state.message ||
+      `${state.status || "working"} · ${state.completed || 0}/${state.total || count}`;
   } else {
     $("aiBatchStatus").textContent = !job
       ? "Open a finished search first."
@@ -287,7 +395,8 @@ async function pollAiBatch(taskId, taskJobId) {
       }
     }
   } catch (err) {
-    $("aiBatchStatus").textContent = `Batch status unavailable: ${err.message}. Saved completed leads are retained.`;
+    $("aiBatchStatus").textContent =
+      `Batch status unavailable: ${err.message}. Saved completed leads are retained.`;
   } finally {
     aiBatchPolling = false;
     syncAiControls();
@@ -301,14 +410,26 @@ async function startAiBatch() {
     return;
   }
   aiBatchPolling = true;
-  renderAiBatch({ status: "queued", message: `Queueing ${count} leads…`, progress: 0 });
+  renderAiBatch({
+    status: "queued",
+    message: `Queueing ${count} leads…`,
+    progress: 0,
+  });
   try {
     const created = await aiApi("/api/ai/assist", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ task: "compile_batch", model: $("aiModel").value, job_id: job.id, scope: $("aiBatchScope").value }),
+      body: JSON.stringify({
+        task: "compile_batch",
+        model: $("aiModel").value,
+        job_id: job.id,
+        scope: $("aiBatchScope").value,
+      }),
     });
-    localStorage.setItem("leadfinder.aiBatchTask", JSON.stringify({ id: created.id, job_id: job.id }));
+    localStorage.setItem(
+      "leadfinder.aiBatchTask",
+      JSON.stringify({ id: created.id, job_id: job.id }),
+    );
     await pollAiBatch(created.id, job.id);
   } catch (err) {
     aiBatchPolling = false;
@@ -329,7 +450,7 @@ function renderAiProposal() {
     ? result.notes.join(" ")
     : result.notes || "";
   output.classList.remove("hidden");
-  output.innerHTML = `<h3>AI search tags · not applied to this search${result.saved_to_niche_pack ? " · saved to niche pack" : ""}</h3><p>AI-generated suggestions for ${escapeHtml(aiProposal.niche)} in ${escapeHtml(aiProposal.location)}. ${result.saved_to_niche_pack ? "Future searches for this niche can include them automatically; review them below and add them to the visible search form if you want to inspect the exact plan now." : "Review them for relevance."}</p><div class="chips">${aiProposal.phrases.map((phrase) => `<span class="chip">${escapeHtml(phrase)}</span>`).join("")}</div>${notes ? `<p>${escapeHtml(notes)}</p>` : ""}<p class="muted">Model: ${escapeHtml(result.model || aiProposal.model)}${result.generated_at ? ` · ${escapeHtml(result.generated_at)}` : ""}${(result.compiled_terms_used || []).length ? ` · learned from ${result.compiled_terms_used.length} compiled term${result.compiled_terms_used.length === 1 ? "" : "s"}` : ""}</p><button id="aiUsePhrases" class="secondary" type="button">Use these phrases</button><p id="aiApplyStatus" class="ai-task-status" role="status"></p>`;
+  output.innerHTML = `<h3>AI search tags · not applied to this search${result.saved_to_niche_pack ? " · saved to niche pack" : ""}</h3><p>AI-generated suggestions for ${escapeHtml(aiProposal.niche)} in ${escapeHtml(aiProposal.location)}. ${result.saved_to_niche_pack ? "Future searches for this niche can include them automatically; review them below and add them to the visible search form if you want to inspect the exact plan now." : "Review them for relevance."}</p><div class="chips">${aiProposal.phrases.map((phrase) => `<span class="chip">${escapeHtml(phrase)}</span>`).join("")}</div>${notes ? `<p>${escapeHtml(notes)}</p>` : ""}<p class="muted">Model: ${escapeHtml(result.model || aiProposal.model)}${result.generated_at ? ` · ${escapeHtml(result.generated_at)}` : ""}${(result.compiled_terms_used || []).length ? ` · learned from ${result.compiled_terms_used.length} compiled term${result.compiled_terms_used.length === 1 ? "" : "s"}` : ""}</p><div class="actions"><button id="aiUsePhrases" class="secondary" type="button">Use these phrases</button><button id="aiRejectPhrases" class="ghost" type="button">Not relevant</button></div><p id="aiApplyStatus" class="ai-task-status" role="status"></p>`;
   $("aiUsePhrases").addEventListener("click", async () => {
     if (
       aiProposal.niche !== $("niche").value.trim() ||
@@ -366,14 +487,61 @@ function renderAiProposal() {
     $("phrases").value = combined;
     $("phrases").closest("details").open = true;
     await updatePlan();
-    aiMessage(
-      "aiApplyStatus",
-      "Added to Additional phrases. Review the strategy, then run your search when ready.",
-    );
+    let remembered = true;
+    try {
+      await api("/api/intelligence/ai-terms", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          niche: aiProposal.niche,
+          phrases: aiProposal.phrases,
+          model: result.model || aiProposal.model,
+          accepted: true,
+        }),
+      });
+    } catch (err) {
+      remembered = false;
+      aiMessage(
+        "aiApplyStatus",
+        "Added to Additional phrases, but teaching memory could not be updated: " +
+          err.message,
+        true,
+      );
+    }
+    if (remembered)
+      aiMessage(
+        "aiApplyStatus",
+        "Added to Additional phrases and remembered for this service. Review the strategy, then run your search when ready.",
+      );
+  });
+  $("aiRejectPhrases").addEventListener("click", async () => {
+    if (!aiProposal) return;
+    $("aiRejectPhrases").disabled = true;
+    try {
+      await api("/api/intelligence/ai-terms", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          niche: aiProposal.niche,
+          phrases: aiProposal.phrases,
+          model: result.model || aiProposal.model,
+          accepted: false,
+        }),
+      });
+      aiMessage(
+        "aiApplyStatus",
+        "Noted. Future suggestions for this service will avoid those phrases.",
+      );
+    } catch (err) {
+      aiMessage("aiApplyStatus", err.message, true);
+    } finally {
+      $("aiRejectPhrases").disabled = false;
+    }
   });
   syncAiControls();
 }
 $("aiRefresh").addEventListener("click", loadAiStatus);
+$("aiTeachSave").addEventListener("click", saveAiTeaching);
 $("aiModel").addEventListener("change", () => {
   localStorage.setItem("leadfinder.aiModel", $("aiModel").value);
   if ($("campaignAiModel")) $("campaignAiModel").value = $("aiModel").value;
@@ -382,6 +550,7 @@ $("aiModel").addEventListener("change", () => {
 });
 for (const id of ["niche", "location"])
   $(id).addEventListener("input", syncAiControls);
+$("niche").addEventListener("input", syncAiTeachFields);
 $("aiPlanButton").addEventListener("click", async () => {
   const niche = $("niche").value.trim();
   const location = $("location").value.trim();
@@ -429,9 +598,9 @@ function route() {
         ? "library"
         : hash === "outreach"
           ? "outreach"
-        : hash === "sources"
-          ? "sources"
-          : "discover";
+          : hash === "sources"
+            ? "sources"
+            : "discover";
   ["discover", "history", "sources", "library", "outreach"].forEach((id) =>
     $(id + "View").classList.toggle("hidden", id !== view),
   );
@@ -463,11 +632,13 @@ window.addEventListener("hashchange", route);
 async function updatePlan() {
   if ($("niche").value.trim().length < 2) {
     $("phraseChips").innerHTML = "";
-    $("planNote").textContent = "Enter any business type or service to build a niche-specific plan.";
+    $("planNote").textContent =
+      "Enter any business type or service to build a niche-specific plan.";
     $("researchStages").innerHTML = "";
     $("coverageSummary").textContent = "";
     $("strategyPreview").innerHTML = "";
-    $("profileHelp").textContent = "General mode works for any niche. Local AI can suggest specialist terms after you enter one.";
+    $("profileHelp").textContent =
+      "General mode works for any niche. Local AI can suggest specialist terms after you enter one.";
     return;
   }
   try {
@@ -487,10 +658,14 @@ async function updatePlan() {
     $("phraseChips").innerHTML = data.phrases
       .map((p) => `<span class="chip">${escapeHtml(p)}</span>`)
       .join("");
-    const rejected = Array.isArray(data.rejected_phrases) ? data.rejected_phrases : [];
-    $("planNote").textContent = data.note + (rejected.length
-      ? ` Rejected ${rejected.length} weak or mismatched term(s): ${rejected.map((item) => `${item.phrase} (${item.reason})`).join("; ")}.`
-      : "");
+    const rejected = Array.isArray(data.rejected_phrases)
+      ? data.rejected_phrases
+      : [];
+    $("planNote").textContent =
+      data.note +
+      (rejected.length
+        ? ` Rejected ${rejected.length} weak or mismatched term(s): ${rejected.map((item) => `${item.phrase} (${item.reason})`).join("; ")}.`
+        : "");
     renderStrategy(data.strategy);
     $("profileHelp").textContent =
       $("researchProfile").value === "hood_automation"
@@ -609,7 +784,10 @@ $("searchForm").addEventListener("submit", async (event) => {
       const linked = await api("/api/workflows", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ job_id: jobId, model: $("aiModel").value || "" }),
+        body: JSON.stringify({
+          job_id: jobId,
+          model: $("aiModel").value || "",
+        }),
       });
       workflowId = linked.id;
       localStorage.setItem("leadfinder.workflowTask", workflowId);
@@ -639,16 +817,30 @@ async function poll() {
 }
 function renderWorkflow() {
   const card = $("workflowCard");
-  const matchesCurrentJob = workflowTask && (!job || workflowTask.job_id === job.id);
+  const matchesCurrentJob =
+    workflowTask && (!job || workflowTask.job_id === job.id);
   card.classList.toggle("hidden", !matchesCurrentJob);
   if (!matchesCurrentJob) return;
-  $("workflowStatus").textContent = workflowTask.message || "Linked workflow is preparing.";
+  $("workflowStatus").textContent =
+    workflowTask.message || "Linked workflow is preparing.";
   $("workflowProgress").value = Number(workflowTask.progress) || 0;
-  const order = ["discovery", "verification", "organization", "compilation", "outreach"];
-  $("workflowStages").innerHTML = order.map((name, index) => {
-    const stage = workflowTask.stages?.[name] || { label: name, status: "pending", message: "Waiting" };
-    return `<article class="workflow-stage ${escapeHtml(stage.status || "pending")}"><span class="eyebrow">${String(index + 1).padStart(2, "0")} · ${escapeHtml((stage.status || "pending").replaceAll("_", " "))}</span><b>${escapeHtml(stage.label || name)}</b><small>${escapeHtml(stage.message || "Waiting")}</small></article>`;
-  }).join("");
+  const order = [
+    "discovery",
+    "verification",
+    "organization",
+    "compilation",
+    "outreach",
+  ];
+  $("workflowStages").innerHTML = order
+    .map((name, index) => {
+      const stage = workflowTask.stages?.[name] || {
+        label: name,
+        status: "pending",
+        message: "Waiting",
+      };
+      return `<article class="workflow-stage ${escapeHtml(stage.status || "pending")}"><span class="eyebrow">${String(index + 1).padStart(2, "0")} · ${escapeHtml((stage.status || "pending").replaceAll("_", " "))}</span><b>${escapeHtml(stage.label || name)}</b><small>${escapeHtml(stage.message || "Waiting")}</small></article>`;
+    })
+    .join("");
   const running = active(workflowTask.status);
   $("cancelWorkflow").classList.toggle("hidden", !running);
   $("cancelWorkflow").disabled = false;
@@ -670,7 +862,9 @@ async function pollWorkflow(id) {
       library = null;
       campaignJobsLoaded = false;
       await loadHistory();
-      const newer = await api(`/api/workflows/current?job_id=${encodeURIComponent(workflowTask.job_id)}`).catch(() => ({}));
+      const newer = await api(
+        `/api/workflows/current?job_id=${encodeURIComponent(workflowTask.job_id)}`,
+      ).catch(() => ({}));
       if (newer.id && newer.id !== id && active(newer.status)) {
         workflowId = newer.id;
         localStorage.setItem("leadfinder.workflowTask", workflowId);
@@ -684,7 +878,9 @@ async function pollWorkflow(id) {
 async function discoverWorkflowForJob() {
   if (!jobId || workflowId) return false;
   try {
-    const found = await api(`/api/workflows/current?job_id=${encodeURIComponent(jobId)}`);
+    const found = await api(
+      `/api/workflows/current?job_id=${encodeURIComponent(jobId)}`,
+    );
     if (!found.id) return false;
     workflowId = found.id;
     workflowTask = found;
@@ -701,7 +897,8 @@ $("cancelWorkflow").addEventListener("click", async () => {
     headers: { "Content-Type": "application/json" },
     body: "{}",
   });
-  $("workflowStatus").textContent = "Stopping the active stage; completed work remains saved.";
+  $("workflowStatus").textContent =
+    "Stopping the active stage; completed work remains saved.";
 });
 function renderJob() {
   rows = job.rows || [];
@@ -832,12 +1029,20 @@ function renderRows() {
       );
     });
   const matchRank = { service_match: 0, category_match: 1, candidate: 2 };
-  const locationRank = { address_mentions_search_city: 0, place_mentioned_on_page: 1, query_only: 2, address_city_needs_review: 3 };
+  const locationRank = {
+    address_mentions_search_city: 0,
+    place_mentioned_on_page: 1,
+    query_only: 2,
+    address_city_needs_review: 3,
+  };
   visible.sort((a, b) =>
     $("sort").value === "name"
       ? a.name.localeCompare(b.name)
       : $("sort").value === "relevance"
-        ? (matchRank[a.match_status] ?? 2) - (matchRank[b.match_status] ?? 2) || (locationRank[a.location_evidence] ?? 2) - (locationRank[b.location_evidence] ?? 2) || Number(b.score) - Number(a.score)
+        ? (matchRank[a.match_status] ?? 2) - (matchRank[b.match_status] ?? 2) ||
+          (locationRank[a.location_evidence] ?? 2) -
+            (locationRank[b.location_evidence] ?? 2) ||
+          Number(b.score) - Number(a.score)
         : Number(b.score) - Number(a.score),
   );
   const ranks = {
@@ -883,17 +1088,25 @@ function recommendedEmail(row) {
   const quality = parseObject(row.email_quality);
   if (!Array.isArray(quality.recommended)) return Boolean(row.email);
   return quality.recommended.some(
-    (item) => item.email?.toLowerCase() === String(row.email || "").toLowerCase(),
+    (item) =>
+      item.email?.toLowerCase() === String(row.email || "").toLowerCase(),
   );
 }
 function emailQualityBadge(row) {
   const quality = parseObject(row.email_quality);
   const preferred = Array.isArray(quality.recommended)
-    ? quality.recommended.find((item) => item.email?.toLowerCase() === String(row.email || "").toLowerCase())
+    ? quality.recommended.find(
+        (item) =>
+          item.email?.toLowerCase() === String(row.email || "").toLowerCase(),
+      )
     : null;
   if (!preferred) {
-    const excluded = Array.isArray(quality.excluded) ? quality.excluded[0] : null;
-    return excluded ? `<small class="email-quality excluded">${escapeHtml(excluded.type.replaceAll("_", " "))} · excluded from outreach</small>` : "";
+    const excluded = Array.isArray(quality.excluded)
+      ? quality.excluded[0]
+      : null;
+    return excluded
+      ? `<small class="email-quality excluded">${escapeHtml(excluded.type.replaceAll("_", " "))} · excluded from outreach</small>`
+      : "";
   }
   return `<small class="email-quality recommended">✓ ${escapeHtml(preferred.type.replaceAll("_", " "))} · recommended</small>`;
 }
@@ -926,15 +1139,21 @@ function details(r, context = {}) {
       ([name, value]) =>
         `<div><strong>${name}</strong>${escapeHtml(value) || "—"}</div>`,
     )
-    .join(
-      "",
-    )}</div>`;
+    .join("")}</div>`;
   const contactBody = `<div class="detail-grid">${[
     ["Primary email", r.email],
     ["Primary phone", r.phone],
     ["Contact status", r.contact_status],
-    ["Decision-maker", [r.decision_maker, r.decision_maker_role].filter(Boolean).join(" · ")],
-  ].map(([name, value]) => `<div><strong>${name}</strong>${escapeHtml(value) || "—"}</div>`).join("")}</div><div class="intel-link-grid">${[
+    [
+      "Decision-maker",
+      [r.decision_maker, r.decision_maker_role].filter(Boolean).join(" · "),
+    ],
+  ]
+    .map(
+      ([name, value]) =>
+        `<div><strong>${name}</strong>${escapeHtml(value) || "—"}</div>`,
+    )
+    .join("")}</div><div class="intel-link-grid">${[
     r.website,
     r.facebook,
     r.instagram,
@@ -944,13 +1163,36 @@ function details(r, context = {}) {
     .map((x) => link(x))
     .join("")}</div>${emailQualityBadge(r)}`;
   const sourceBody = `<div class="intel-link-grid">${link(r.source_url, "Open primary public source ↗")}${link(r.website, "Open business website ↗")}</div>${evidence.length ? evidence.map((e) => `<div class="evidence"><b>${escapeHtml(e.field)}: ${escapeHtml(e.value)}</b><small>${escapeHtml(e.method)} · ${escapeHtml(e.observed_at)}</small>${link(e.url)}</div>`).join("") : "<p>No website evidence recorded. Listing contacts can be checked at the public source link above.</p>"}`;
-  $("detailBody").innerHTML = `${snapshot}${intelligenceSection("Contact intelligence", "Published phone, email, decision-maker and profiles", contactBody, true, r.email ? "Email found" : "Needs contact")}${intelligenceSection("Contact evidence", `${evidence.length} retained source claim${evidence.length === 1 ? "" : "s"}`, sourceBody)}`;
+  $("detailBody").innerHTML =
+    `${snapshot}${intelligenceSection("Contact intelligence", "Published phone, email, decision-maker and profiles", contactBody, true, r.email ? "Email found" : "Needs contact")}${intelligenceSection("Contact evidence", `${evidence.length} retained source claim${evidence.length === 1 ? "" : "s"}`, sourceBody)}`;
   $("detailBody").insertAdjacentHTML("beforeend", aiReviewDetails(r));
-  const operatorEvidence = parseList(r.operator_evidence).map((e) => `<div class="evidence"><b>${escapeHtml(e.status)}</b><p>${escapeHtml(e.excerpt)}</p>${link(e.url)}</div>`).join("");
-  const factEvidence = parseList(r.facts).map((e) => `<div class="evidence"><b>${escapeHtml(e.field)} · ${escapeHtml(e.status)}</b><p>${escapeHtml(e.value)}</p>${link(e.url)}<small>${escapeHtml(e.basis)}</small></div>`).join("") || "<p>Not assessed in this earlier run.</p>";
-  const assumptionEvidence = parseList(r.assumptions).map((x) => `<p>• ${escapeHtml(x)}</p>`).join("") || "<p>No unresolved assumption was recorded.</p>";
+  const operatorEvidence = parseList(r.operator_evidence)
+    .map(
+      (e) =>
+        `<div class="evidence"><b>${escapeHtml(e.status)}</b><p>${escapeHtml(e.excerpt)}</p>${link(e.url)}</div>`,
+    )
+    .join("");
+  const factEvidence =
+    parseList(r.facts)
+      .map(
+        (e) =>
+          `<div class="evidence"><b>${escapeHtml(e.field)} · ${escapeHtml(e.status)}</b><p>${escapeHtml(e.value)}</p>${link(e.url)}<small>${escapeHtml(e.basis)}</small></div>`,
+      )
+      .join("") || "<p>Not assessed in this earlier run.</p>";
+  const assumptionEvidence =
+    parseList(r.assumptions)
+      .map((x) => `<p>• ${escapeHtml(x)}</p>`)
+      .join("") || "<p>No unresolved assumption was recorded.</p>";
   const qualificationBody = `<div class="detail-grid"><div><strong>Operator type</strong>${escapeHtml((r.operator_type || "not assessed").replaceAll("_", " "))}</div><div><strong>Confidence</strong>${escapeHtml((r.operator_confidence || "unknown").replaceAll("_", " "))}</div><div><strong>Discovery query</strong>${escapeHtml(r.discovery_query) || "Not recorded"}</div><div><strong>Quality flags</strong>${escapeHtml(parseList(r.quality_flags).join(", ") || "None recorded")}</div></div>${operatorEvidence}${intelligenceSubsection("Observed facts and source claims", factEvidence, true)}${intelligenceSubsection("Assumptions and unresolved checks", assumptionEvidence, true)}`;
-  $("detailBody").insertAdjacentHTML("beforeend", intelligenceSection("Qualification & evidence analysis", "Operator type, observed facts, assumptions and quality flags", qualificationBody, true));
+  $("detailBody").insertAdjacentHTML(
+    "beforeend",
+    intelligenceSection(
+      "Qualification & evidence analysis",
+      "Operator type, observed facts, assumptions and quality flags",
+      qualificationBody,
+      true,
+    ),
+  );
   $("detailBody").insertAdjacentHTML("beforeend", opportunityDetails(r));
   $("detailBody").insertAdjacentHTML("beforeend", verificationDetails(r));
   $("detailBody").insertAdjacentHTML("beforeend", socialDiscoveryDetails(r));
@@ -958,15 +1200,30 @@ function details(r, context = {}) {
   const merged = parseList(r.duplicate_summary);
   $("detailBody").insertAdjacentHTML(
     "beforeend",
-    intelligenceSection("Merged duplicate sources", "Canonical record and retained merge trail", `${merged.length
-      ? merged.map((item) => `<div class="evidence"><b>${escapeHtml(item.name || "Matching record")}</b><p>${escapeHtml(item.address || item.city || "Location not recorded")}</p>${link(item.source_url || item.website, "Open retained source ↗")}<small>${escapeHtml(item.source || "source")} · consolidated into this canonical prospect</small></div>`).join("")
-      : "<p>No duplicate source records were consolidated into this prospect.</p>"}`),
+    intelligenceSection(
+      "Merged duplicate sources",
+      "Canonical record and retained merge trail",
+      `${
+        merged.length
+          ? merged
+              .map(
+                (item) =>
+                  `<div class="evidence"><b>${escapeHtml(item.name || "Matching record")}</b><p>${escapeHtml(item.address || item.city || "Location not recorded")}</p>${link(item.source_url || item.website, "Open retained source ↗")}<small>${escapeHtml(item.source || "source")} · consolidated into this canonical prospect</small></div>`,
+              )
+              .join("")
+          : "<p>No duplicate source records were consolidated into this prospect.</p>"
+      }`,
+    ),
   );
   $("aiReviewButton").textContent = "Review with local AI";
-  $("aiReviewButton").closest(".ai-review").querySelector(".notice").append(" AI-generated and unverified until you approve it.");
+  $("aiReviewButton")
+    .closest(".ai-review")
+    .querySelector(".notice")
+    .append(" AI-generated and unverified until you approve it.");
   $("aiReviewButton").addEventListener("click", reviewLeadWithAi);
   $("aiCompileButton").addEventListener("click", compileLeadWithAi);
-  if ($("recordOutcome")) $("recordOutcome").addEventListener("click", () => recordLeadOutcome(r));
+  if ($("recordOutcome"))
+    $("recordOutcome").addEventListener("click", () => recordLeadOutcome(r));
   if (!$("leadDialog").open) $("leadDialog").showModal();
   syncAiControls();
   if (r.entity_id) loadEntityMemory(r.entity_id);
@@ -975,14 +1232,26 @@ async function loadEntityMemory(entityId) {
   const host = document.createElement("details");
   host.id = "entityMemory";
   host.className = "intel-accordion";
-  host.innerHTML = '<summary><span class="intel-summary-copy"><h3>Connected company history</h3><small>Loading locations, contacts, evidence and outcomes…</small></span><span class="intel-chevron" aria-hidden="true">⌄</span></summary><div class="intel-accordion-body"><p>Loading connected memory…</p></div>';
+  host.innerHTML =
+    '<summary><span class="intel-summary-copy"><h3>Connected company history</h3><small>Loading locations, contacts, evidence and outcomes…</small></span><span class="intel-chevron" aria-hidden="true">⌄</span></summary><div class="intel-accordion-body"><p>Loading connected memory…</p></div>';
   $("detailBody").append(host);
   try {
-    const memory = await api(`/api/intelligence/entities/${encodeURIComponent(entityId)}`);
+    const memory = await api(
+      `/api/intelligence/entities/${encodeURIComponent(entityId)}`,
+    );
     if (!host.isConnected) return;
-    host.innerHTML = `<summary><span class="intel-summary-copy"><h3>Connected company history</h3><small>First observed ${escapeHtml(String(memory.first_seen || "").replace("T", " ").slice(0, 16))} · last observed ${escapeHtml(String(memory.last_seen || "").replace("T", " ").slice(0, 16))}</small></span><span class="intel-summary-badge">${memory.evidence?.length || 0} claims</span><span class="intel-chevron" aria-hidden="true">⌄</span></summary><div class="intel-accordion-body"><div class="detail-grid"><div><strong>Locations</strong>${memory.locations?.length || 0}</div><div><strong>Contacts retained</strong>${memory.contacts?.length || 0}</div><div><strong>Evidence claims</strong>${memory.evidence?.length || 0}</div><div><strong>Outcomes</strong>${memory.outcomes?.length || 0}</div></div>${intelligenceSubsection(`Contact history · ${memory.contacts?.length || 0}`, (memory.contacts || []).map((contact) => `<div class="evidence"><b>${escapeHtml(contact.name || contact.email || contact.phone)}</b><p>${escapeHtml([contact.role, contact.email, contact.phone].filter(Boolean).join(" · "))}</p><small>${escapeHtml(contact.status)} · confidence ${Number(contact.confidence) || 0}/100</small></div>`).join("") || "<p>No retained contact history.</p>")}${intelligenceSubsection(`Known locations · ${memory.locations?.length || 0}`, (memory.locations || []).map((location) => `<div class="evidence"><b>${escapeHtml(location.address || location.city)}</b>${link(location.source_url, "Source ↗")}<small>Last observed ${escapeHtml(String(location.last_seen || "").slice(0, 10))}</small></div>`).join("") || "<p>No known location history.</p>")}${intelligenceSubsection(`Outreach outcomes · ${memory.outcomes?.length || 0}`, (memory.outcomes || []).map((outcome) => `<div class="evidence"><b>${escapeHtml(outcome.outcome.replaceAll("_", " "))}</b><p>${escapeHtml(outcome.note)}</p><small>${escapeHtml(outcome.created_at)}</small></div>`).join("") || "<p>No outreach outcomes recorded.</p>")}${intelligenceSubsection(`Evidence ledger · ${memory.evidence?.length || 0}`, (memory.evidence || []).map((item) => `<div class="evidence"><b>${escapeHtml(item.field)}: ${escapeHtml(item.value)}</b>${link(item.source_url, "Evidence source ↗")}<small>${escapeHtml(item.basis)} · ${escapeHtml(item.observed_at)}</small></div>`).join("") || "<p>No retained claims.</p>")}</div>`;
+    host.innerHTML = `<summary><span class="intel-summary-copy"><h3>Connected company history</h3><small>First observed ${escapeHtml(
+      String(memory.first_seen || "")
+        .replace("T", " ")
+        .slice(0, 16),
+    )} · last observed ${escapeHtml(
+      String(memory.last_seen || "")
+        .replace("T", " ")
+        .slice(0, 16),
+    )}</small></span><span class="intel-summary-badge">${memory.evidence?.length || 0} claims</span><span class="intel-chevron" aria-hidden="true">⌄</span></summary><div class="intel-accordion-body"><div class="detail-grid"><div><strong>Locations</strong>${memory.locations?.length || 0}</div><div><strong>Contacts retained</strong>${memory.contacts?.length || 0}</div><div><strong>Evidence claims</strong>${memory.evidence?.length || 0}</div><div><strong>Outcomes</strong>${memory.outcomes?.length || 0}</div></div>${intelligenceSubsection(`Contact history · ${memory.contacts?.length || 0}`, (memory.contacts || []).map((contact) => `<div class="evidence"><b>${escapeHtml(contact.name || contact.email || contact.phone)}</b><p>${escapeHtml([contact.role, contact.email, contact.phone].filter(Boolean).join(" · "))}</p><small>${escapeHtml(contact.status)} · confidence ${Number(contact.confidence) || 0}/100</small></div>`).join("") || "<p>No retained contact history.</p>")}${intelligenceSubsection(`Known locations · ${memory.locations?.length || 0}`, (memory.locations || []).map((location) => `<div class="evidence"><b>${escapeHtml(location.address || location.city)}</b>${link(location.source_url, "Source ↗")}<small>Last observed ${escapeHtml(String(location.last_seen || "").slice(0, 10))}</small></div>`).join("") || "<p>No known location history.</p>")}${intelligenceSubsection(`Outreach outcomes · ${memory.outcomes?.length || 0}`, (memory.outcomes || []).map((outcome) => `<div class="evidence"><b>${escapeHtml(outcome.outcome.replaceAll("_", " "))}</b><p>${escapeHtml(outcome.note)}</p><small>${escapeHtml(outcome.created_at)}</small></div>`).join("") || "<p>No outreach outcomes recorded.</p>")}${intelligenceSubsection(`Evidence ledger · ${memory.evidence?.length || 0}`, (memory.evidence || []).map((item) => `<div class="evidence"><b>${escapeHtml(item.field)}: ${escapeHtml(item.value)}</b>${link(item.source_url, "Evidence source ↗")}<small>${escapeHtml(item.basis)} · ${escapeHtml(item.observed_at)}</small></div>`).join("") || "<p>No retained claims.</p>")}</div>`;
   } catch (err) {
-    if (host.isConnected) host.innerHTML = `<summary><span class="intel-summary-copy"><h3>Connected company history</h3><small>Memory could not be loaded</small></span><span class="intel-chevron" aria-hidden="true">⌄</span></summary><div class="intel-accordion-body"><p class="notice">${escapeHtml(err.message)}</p></div>`;
+    if (host.isConnected)
+      host.innerHTML = `<summary><span class="intel-summary-copy"><h3>Connected company history</h3><small>Memory could not be loaded</small></span><span class="intel-chevron" aria-hidden="true">⌄</span></summary><div class="intel-accordion-body"><p class="notice">${escapeHtml(err.message)}</p></div>`;
   }
 }
 function intelligenceDetails(r) {
@@ -990,12 +1259,41 @@ function intelligenceDetails(r) {
   const audit = parseObject(r.website_audit);
   const signals = parseList(r.opportunity_signals);
   if (!r.entity_id && !insight.entity_id)
-    return intelligenceSection("Lead intelligence memory", "Identity, audit, next action and outcome learning", "<p>This earlier prospect has not completed the intelligence compilation stage yet.</p>");
+    return intelligenceSection(
+      "Lead intelligence memory",
+      "Identity, audit, next action and outcome learning",
+      "<p>This earlier prospect has not completed the intelligence compilation stage yet.</p>",
+    );
   const overview = `<div class="detail-grid"><div><strong>Canonical company</strong>${escapeHtml(r.entity_id || insight.entity_id)}</div><div><strong>Operating location</strong>${escapeHtml(r.operating_entity_id || "not compiled")}</div><div><strong>Contact confidence</strong>${Number(r.contact_confidence ?? insight.contact_confidence) || 0}/100</div><div><strong>Next best action</strong>${escapeHtml(String(r.next_best_action || insight.next_best_action || "review").replaceAll("_", " "))}</div><div><strong>Public change</strong>${insight.change_detected ? "Detected since previous snapshot" : "No change detected"}</div></div><p>${escapeHtml(r.next_action_reason || insight.next_action_reason || "")}</p>`;
-  const auditBody = `<div class="detail-grid">${[["Status", audit.status], ["Contact form", audit.contact_form], ["Booking path", audit.booking_path], ["Mobile viewport", audit.mobile_viewport], ["Structured data", audit.structured_data], ["Analytics tags", audit.analytics]].map(([label, value]) => `<div><strong>${label}</strong>${escapeHtml(value === true ? "observed" : value === false ? "not observed" : value || "unknown")}</div>`).join("")}</div>`;
-  const signalBody = signals.length ? signals.map((signal) => `<div class="evidence"><b>${escapeHtml(signal.label || signal.kind)}</b><p>${escapeHtml(signal.evidence)}</p><small>${escapeHtml(signal.strength || "candidate")} · observation, not a guaranteed buying signal</small></div>`).join("") : "<p>No supported opportunity signal was compiled.</p>";
+  const auditBody = `<div class="detail-grid">${[
+    ["Status", audit.status],
+    ["Contact form", audit.contact_form],
+    ["Booking path", audit.booking_path],
+    ["Mobile viewport", audit.mobile_viewport],
+    ["Structured data", audit.structured_data],
+    ["Analytics tags", audit.analytics],
+  ]
+    .map(
+      ([label, value]) =>
+        `<div><strong>${label}</strong>${escapeHtml(value === true ? "observed" : value === false ? "not observed" : value || "unknown")}</div>`,
+    )
+    .join("")}</div>`;
+  const signalBody = signals.length
+    ? signals
+        .map(
+          (signal) =>
+            `<div class="evidence"><b>${escapeHtml(signal.label || signal.kind)}</b><p>${escapeHtml(signal.evidence)}</p><small>${escapeHtml(signal.strength || "candidate")} · observation, not a guaranteed buying signal</small></div>`,
+        )
+        .join("")
+    : "<p>No supported opportunity signal was compiled.</p>";
   const outcomeBody = `<div class="outcome-row"><select id="leadOutcome"><option value="replied">Replied</option><option value="positive_reply">Positive reply</option><option value="referral">Referral</option><option value="out_of_office">Out of office</option><option value="meeting_booked">Meeting booked</option><option value="customer_won">Customer won</option><option value="not_interested">Not interested</option><option value="wrong_contact">Wrong contact</option><option value="hard_bounce">Hard bounce</option><option value="bounced">Bounced</option><option value="unsubscribed">Unsubscribed</option></select><button id="recordOutcome" class="secondary" type="button">Save outcome</button></div><p id="outcomeStatus" class="muted">The next-action queue and suppression rules update immediately.</p>`;
-  return intelligenceSection("Lead intelligence memory", "Identity, website audit, next action and outcome learning", `${overview}${intelligenceSubsection("Website opportunity audit", auditBody)}${intelligenceSubsection(`Opportunity and intent signals · ${signals.length}`, signalBody)}${intelligenceSubsection("Record an outreach outcome", outcomeBody)}`, false, `${Number(r.contact_confidence ?? insight.contact_confidence) || 0}% contact`);
+  return intelligenceSection(
+    "Lead intelligence memory",
+    "Identity, website audit, next action and outcome learning",
+    `${overview}${intelligenceSubsection("Website opportunity audit", auditBody)}${intelligenceSubsection(`Opportunity and intent signals · ${signals.length}`, signalBody)}${intelligenceSubsection("Record an outreach outcome", outcomeBody)}`,
+    false,
+    `${Number(r.contact_confidence ?? insight.contact_confidence) || 0}% contact`,
+  );
 }
 async function recordLeadOutcome(row) {
   const button = $("recordOutcome");
@@ -1004,9 +1302,15 @@ async function recordLeadOutcome(row) {
     await api("/api/intelligence/outcomes", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ company_id: row.entity_id, email: row.email, outcome: $("leadOutcome").value, note: "Recorded from prospect details" }),
+      body: JSON.stringify({
+        company_id: row.entity_id,
+        email: row.email,
+        outcome: $("leadOutcome").value,
+        note: "Recorded from prospect details",
+      }),
     });
-    $("outcomeStatus").textContent = "Outcome saved. The work queue and outreach safety gate were updated.";
+    $("outcomeStatus").textContent =
+      "Outcome saved. The work queue and outreach safety gate were updated.";
     intelligenceOverview = await api("/api/intelligence/overview");
     intelligenceQueue = await api("/api/intelligence/queue");
     renderIntelligence();
@@ -1019,13 +1323,21 @@ async function recordLeadOutcome(row) {
 function verificationDetails(r) {
   const report = parseObject(r.verification);
   if (!report.status)
-    return intelligenceSection("Second-round verification", "Website, reviews, social, ads and email quality", "<p>Not run for this prospect yet. It will be queued by the linked workflow after discovery.</p>");
+    return intelligenceSection(
+      "Second-round verification",
+      "Website, reviews, social, ads and email quality",
+      "<p>Not run for this prospect yet. It will be queued by the linked workflow after discovery.</p>",
+    );
   const website = report.website || {};
-  const socials = Object.entries(report.socials || {}).filter(([, value]) => value?.url);
+  const socials = Object.entries(report.socials || {}).filter(
+    ([, value]) => value?.url,
+  );
   const ads = report.ads || {};
   const tech = report.technographics || {};
   const fetchInfo = tech.fetch || {};
-  const headerSignals = Object.entries(tech.headers || {}).map(([name, value]) => `${name}: ${value}`);
+  const headerSignals = Object.entries(tech.headers || {}).map(
+    ([name, value]) => `${name}: ${value}`,
+  );
   const dnsSignals = tech.dns || {};
   const otherReviews = report.reviews?.other_sources || [];
   const marketSignals = report.market_signals?.candidates || [];
@@ -1033,20 +1345,64 @@ function verificationDetails(r) {
   const overview = `<div class="detail-grid"><div><strong>Website check</strong>${escapeHtml((website.status || "unknown").replaceAll("_", " "))}</div><div><strong>Fetch tier</strong>${escapeHtml(String(fetchInfo.fetch_tier || "standard HTTP").replaceAll("_", " "))}</div><div><strong>Checked</strong>${escapeHtml(report.checked_at || "—")}</div><div><strong>Google rating</strong>${escapeHtml(report.reviews?.google_maps?.rating || "—")} · ${escapeHtml(report.reviews?.google_maps?.review_count || "0")} reviews</div><div><strong>Ads evidence</strong>${escapeHtml((ads.status || "not verified").replaceAll("_", " "))}</div><div><strong>SPF / DMARC</strong>${escapeHtml(`${(dnsSignals.spf || []).length ? "observed" : "not observed"} / ${(dnsSignals.dmarc || []).length ? "observed" : "not observed"}`)}</div></div>${website.error ? `<p class="notice">${escapeHtml(website.error)}</p>` : ""}${fetchInfo.waf_signature ? `<p class="notice">A browser security checkpoint was detected. The lead is retained for manual review; the app does not evade the checkpoint.</p>` : ""}`;
   const technographics = `<div class="detail-grid"><div><strong>Server / framework</strong>${escapeHtml(headerSignals.join(", ") || "not observed")}</div><div><strong>Cookies</strong>${escapeHtml((tech.cookie_names || []).join(", ") || "not observed")}</div><div><strong>Robots / sitemap</strong>${escapeHtml([tech.robots?.status || tech.robots, tech.sitemap?.status || tech.sitemap].filter(Boolean).join(" / ") || "not checked")}</div><div><strong>Fetch duration</strong>${Number(fetchInfo.elapsed_ms || 0) ? `${Number(fetchInfo.elapsed_ms)} ms` : "not recorded"}</div></div>`;
   const emails = `${[...(emailQuality.recommended || []), ...(emailQuality.excluded || [])].map((item) => `<div class="evidence"><b>${escapeHtml(item.email)}</b><span class="badge ${item.recommended ? "" : "candidate"}">${escapeHtml(item.recommended ? "outreach eligible" : "excluded")}</span><small>${escapeHtml(String(item.type || "unknown").replaceAll("_", " "))} · ${escapeHtml(String(item.deliverability || "not tested").replaceAll("_", " "))} · ${escapeHtml(String(item.basis || "unknown").replaceAll("_", " "))}</small></div>`).join("") || "<p>No published email was available to classify.</p>"}<p><b>Mail domain:</b> ${escapeHtml(String(report.email_domain?.status || "not checked").replaceAll("_", " "))}</p><p class="fine-print">${escapeHtml(report.email_domain?.note || emailQuality.note || "Mailbox deliverability was not tested.")} A mailbox becomes delivery-confirmed only after a real send outcome.</p>`;
-  const profiles = socials.length ? socials.map(([name, value]) => `<div class="evidence"><b>${escapeHtml(name)}</b>${link(value.url)}<small>${escapeHtml((value.status || "listed").replaceAll("_", " "))}</small></div>`).join("") : "<p>No social profile link was found in saved public evidence.</p>";
+  const profiles = socials.length
+    ? socials
+        .map(
+          ([name, value]) =>
+            `<div class="evidence"><b>${escapeHtml(name)}</b>${link(value.url)}<small>${escapeHtml((value.status || "listed").replaceAll("_", " "))}</small></div>`,
+        )
+        .join("")
+    : "<p>No social profile link was found in saved public evidence.</p>";
   const advertising = `<p>${escapeHtml(ads.note || "Campaign status was not verified.")}</p>${(ads.tracking_signals || []).map((signal) => `<div class="evidence"><b>${escapeHtml(signal.signal.replaceAll("_", " "))}</b>${link(signal.source_url, "Observed page ↗")}<small>Website source pattern; not proof of an active campaign.</small></div>`).join("") || "<p>No supported website tracking signal was observed. This does not prove no ads.</p>"}<p>${link(ads.meta_ad_library, "Check Meta Ad Library ↗")} · ${link(ads.google_ads_transparency, "Check Google Ads Transparency Center ↗")}</p>`;
-  const marketPresence = marketSignals.length ? marketSignals.map((signal) => `<div class="evidence"><b>${escapeHtml(String(signal.platform || "public platform").replace("www.", ""))} · ${escapeHtml(String(signal.kind || "candidate signal").replaceAll("_", " "))}</b><p>${escapeHtml(signal.title || signal.snippet || "Public result")}</p>${link(signal.url, "Review source ↗")}<small>${escapeHtml((signal.matched_name_terms || []).join(", ") || "name needs confirmation")} · search-result evidence, not a confirmed company claim</small></div>`).join("") : "<p>No matching public hiring, startup, product, Clutch, or GoodFirms signal was retained.</p>";
-  const reviews = otherReviews.length ? otherReviews.map((source) => `<div class="evidence"><b>${escapeHtml(source.title || source.source)}</b><p>${escapeHtml(source.snippet)}</p>${link(source.url, "Open result ↗")}<small>Search-result snippet · unverified</small></div>`).join("") : "<p>No additional Yelp, BBB, Facebook, Angi, or Houzz result was retained.</p>";
-  return intelligenceSection("Second-round verification", "Website, reviews, social, ads, market activity and email quality", `${overview}${intelligenceSubsection("Technographic evidence", technographics)}${intelligenceSubsection("Email organization", emails, true)}${intelligenceSubsection(`Published social profiles · ${socials.length}`, profiles)}${intelligenceSubsection("Advertising signals", advertising)}${intelligenceSubsection(`Hiring, startup & marketplace signals · ${marketSignals.length}`, marketPresence)}${intelligenceSubsection(`Other public review sources · ${otherReviews.length}`, reviews)}`, false, report.status.replaceAll("_", " "));
+  const marketPresence = marketSignals.length
+    ? marketSignals
+        .map(
+          (signal) =>
+            `<div class="evidence"><b>${escapeHtml(String(signal.platform || "public platform").replace("www.", ""))} · ${escapeHtml(String(signal.kind || "candidate signal").replaceAll("_", " "))}</b><p>${escapeHtml(signal.title || signal.snippet || "Public result")}</p>${link(signal.url, "Review source ↗")}<small>${escapeHtml((signal.matched_name_terms || []).join(", ") || "name needs confirmation")} · search-result evidence, not a confirmed company claim</small></div>`,
+        )
+        .join("")
+    : "<p>No matching public hiring, startup, product, Clutch, or GoodFirms signal was retained.</p>";
+  const reviews = otherReviews.length
+    ? otherReviews
+        .map(
+          (source) =>
+            `<div class="evidence"><b>${escapeHtml(source.title || source.source)}</b><p>${escapeHtml(source.snippet)}</p>${link(source.url, "Open result ↗")}<small>Search-result snippet · unverified</small></div>`,
+        )
+        .join("")
+    : "<p>No additional Yelp, BBB, Facebook, Angi, or Houzz result was retained.</p>";
+  return intelligenceSection(
+    "Second-round verification",
+    "Website, reviews, social, ads, market activity and email quality",
+    `${overview}${intelligenceSubsection("Technographic evidence", technographics)}${intelligenceSubsection("Email organization", emails, true)}${intelligenceSubsection(`Published social profiles · ${socials.length}`, profiles)}${intelligenceSubsection("Advertising signals", advertising)}${intelligenceSubsection(`Hiring, startup & marketplace signals · ${marketSignals.length}`, marketPresence)}${intelligenceSubsection(`Other public review sources · ${otherReviews.length}`, reviews)}`,
+    false,
+    report.status.replaceAll("_", " "),
+  );
 }
 function socialDiscoveryDetails(r) {
-  const discovery = { ...parseObject(parseObject(r.verification).social_discovery) };
-  discovery.error = discovery.error || discovery.browser_checkpoint || (discovery.fallback_error ? `Fallback note: ${discovery.fallback_error}` : "");
-  discovery.query = [discovery.query, ...(discovery.targeted_queries || [])].filter(Boolean).join(" · ");
-  const candidates = Array.isArray(discovery.candidates) ? discovery.candidates : [];
+  const discovery = {
+    ...parseObject(parseObject(r.verification).social_discovery),
+  };
+  discovery.error =
+    discovery.error ||
+    discovery.browser_checkpoint ||
+    (discovery.fallback_error
+      ? `Fallback note: ${discovery.fallback_error}`
+      : "");
+  discovery.query = [discovery.query, ...(discovery.targeted_queries || [])]
+    .filter(Boolean)
+    .join(" · ");
+  const candidates = Array.isArray(discovery.candidates)
+    ? discovery.candidates
+    : [];
   if (!discovery.status) return "";
   const body = `<p><b>${escapeHtml(String(discovery.status).replaceAll("_", " "))}</b> · ${candidates.length} candidate${candidates.length === 1 ? "" : "s"}</p>${discovery.error ? `<p class="notice">${escapeHtml(discovery.error)}</p>` : ""}${intelligenceSubsection("Exact query and candidate evidence", `<p>${escapeHtml(discovery.query || "Query unavailable")}</p>${link(discovery.search_url, "Open the saved Google search ↗")}${candidates.map((item) => `<div class="evidence"><b>${escapeHtml(String(item.kind || "source").replaceAll("_", " "))} · ${Math.round(Number(item.confidence || 0) * 100)}% candidate match</b><p>${escapeHtml(item.title || item.excerpt || "No result title")}</p>${link(item.url, "Review candidate ↗")}<small>${escapeHtml(item.confirmation_state || "candidate needs review")} · ${escapeHtml(item.source || "google chrome result")}</small></div>`).join("") || "<p>No candidate result was retained.</p>"}`)}`;
-  return intelligenceSection("Chrome web social discovery", "Targeted public-profile search and candidate comparison", body, false, `${candidates.length} found`);
+  return intelligenceSection(
+    "Chrome web social discovery",
+    "Targeted public-profile search and candidate comparison",
+    body,
+    false,
+    `${candidates.length} found`,
+  );
 }
 function parseObject(value) {
   try {
@@ -1069,11 +1425,26 @@ function aiReviewDetails(r) {
   const metadata = (value) =>
     `<p class="muted">${escapeHtml(value.model || "Local model")}${value.generated_at ? ` · ${escapeHtml(value.generated_at)}` : ""}${value.status ? ` · ${escapeHtml(value.status.replaceAll("_", " "))}` : ""}</p>`;
   const controls = `<p class="notice">The compiler rejects claims without an immutable evidence ID and literal source excerpt. Advisory outreach drafts still require your review.</p><div class="actions"><button id="aiReviewButton" class="secondary" type="button" ${detailContext.rowIndex < 0 ? "disabled" : ""}>Review + draft</button><button id="aiCompileButton" class="secondary" type="button" ${detailContext.rowIndex < 0 ? "disabled" : ""}>Compile strict intelligence</button></div><p class="ai-explanation">Only this saved lead’s retained evidence is provided. ${active(job?.status) ? "Wait for this search to finish before requesting AI work." : "No email or browser action is available to the model."}</p><p id="aiReviewStatus" class="ai-task-status ${message?.error ? "is-error" : ""}" role="status">${escapeHtml(message?.text || (!aiReady() ? "Local AI is unavailable. Check its connection in the search panel; your saved data remains usable." : ""))}</p>`;
-  const compilerBody = compiler.canonical_company_id ? `<p class="muted">${escapeHtml(compilerMeta.model || "Local model")} · ${escapeHtml(compilerMeta.validation || "validated")}</p><div class="detail-grid"><div><strong>Canonical company</strong>${escapeHtml(compiler.canonical_company_id)}</div><div><strong>Contact state</strong>${escapeHtml(String(compiler.contact_readiness?.deliverability_state || "unknown").replaceAll("_", " "))}</div><div><strong>Outreach eligible</strong>${compiler.contact_readiness?.eligible_for_outreach ? "Yes" : "No"}</div><div><strong>Next action</strong>${escapeHtml(String(compiler.next_best_action?.queue_state || "manual review").replaceAll("_", " "))}</div><div><strong>Material change</strong>${compiler.semantic_change_summary?.is_material_change ? "Yes" : "No"}</div></div><p>${escapeHtml(compiler.next_best_action?.rationale || "")}</p>` : "<p>No strict AI compilation saved yet.</p>";
-  const interpretationBody = analysis.status ? `${metadata(analysis)}<p><b>Interpretation:</b> ${escapeHtml(analysis.summary || "No summary returned.")}</p>${analysis.fit ? `<p><b>Suggested fit:</b> ${escapeHtml(analysis.fit)}</p>` : ""}${analysis.disclaimer ? `<p class="muted">${escapeHtml(analysis.disclaimer)}</p>` : ""}` : "<p>No advisory AI review recorded for this lead.</p>";
-  const evidenceBody = reasons.length ? reasons.map((reason) => `<div class="evidence">${reason.quote ? `<p>“${escapeHtml(reason.quote)}”</p>` : ""}${reason.note ? `<p>${escapeHtml(reason.note)}</p>` : ""}${link(reason.url, "Check cited source ↗")}<small>${escapeHtml(reason.source_id || "")}</small></div>`).join("") : "<p>No supporting source quotations returned.</p>";
-  const questionsBody = questions.length ? `<ul>${questions.map((question) => `<li>${escapeHtml(question)}</li>`).join("")}</ul>` : "<p>No unresolved model questions were saved.</p>";
-  const draftBody = draft.status ? `${metadata(draft)}${draft.status === "needs_offer" ? "<p>Add your real offer in the search panel, then request a review again to prepare a draft. No offer is invented for you.</p>" : ""}${draft.subject ? `<p><b>Subject:</b> ${escapeHtml(draft.subject)}</p>` : ""}${draft.body ? `<div class="ai-draft-body">${escapeHtml(draft.body)}</div>` : "<p>No usable outreach draft recorded.</p>"}${draft.disclaimer ? `<p class="muted">${escapeHtml(draft.disclaimer)}</p>` : ""}` : "<p>No outreach draft has been prepared.</p>";
+  const compilerBody = compiler.canonical_company_id
+    ? `<p class="muted">${escapeHtml(compilerMeta.model || "Local model")} · ${escapeHtml(compilerMeta.validation || "validated")}</p><div class="detail-grid"><div><strong>Canonical company</strong>${escapeHtml(compiler.canonical_company_id)}</div><div><strong>Contact state</strong>${escapeHtml(String(compiler.contact_readiness?.deliverability_state || "unknown").replaceAll("_", " "))}</div><div><strong>Outreach eligible</strong>${compiler.contact_readiness?.eligible_for_outreach ? "Yes" : "No"}</div><div><strong>Next action</strong>${escapeHtml(String(compiler.next_best_action?.queue_state || "manual review").replaceAll("_", " "))}</div><div><strong>Material change</strong>${compiler.semantic_change_summary?.is_material_change ? "Yes" : "No"}</div></div><p>${escapeHtml(compiler.next_best_action?.rationale || "")}</p>`
+    : "<p>No strict AI compilation saved yet.</p>";
+  const interpretationBody = analysis.status
+    ? `${metadata(analysis)}<p><b>Interpretation:</b> ${escapeHtml(analysis.summary || "No summary returned.")}</p>${analysis.fit ? `<p><b>Suggested fit:</b> ${escapeHtml(analysis.fit)}</p>` : ""}${analysis.disclaimer ? `<p class="muted">${escapeHtml(analysis.disclaimer)}</p>` : ""}`
+    : "<p>No advisory AI review recorded for this lead.</p>";
+  const evidenceBody = reasons.length
+    ? reasons
+        .map(
+          (reason) =>
+            `<div class="evidence">${reason.quote ? `<p>“${escapeHtml(reason.quote)}”</p>` : ""}${reason.note ? `<p>${escapeHtml(reason.note)}</p>` : ""}${link(reason.url, "Check cited source ↗")}<small>${escapeHtml(reason.source_id || "")}</small></div>`,
+        )
+        .join("")
+    : "<p>No supporting source quotations returned.</p>";
+  const questionsBody = questions.length
+    ? `<ul>${questions.map((question) => `<li>${escapeHtml(question)}</li>`).join("")}</ul>`
+    : "<p>No unresolved model questions were saved.</p>";
+  const draftBody = draft.status
+    ? `${metadata(draft)}${draft.status === "needs_offer" ? "<p>Add your real offer in the search panel, then request a review again to prepare a draft. No offer is invented for you.</p>" : ""}${draft.subject ? `<p><b>Subject:</b> ${escapeHtml(draft.subject)}</p>` : ""}${draft.body ? `<div class="ai-draft-body">${escapeHtml(draft.body)}</div>` : "<p>No usable outreach draft recorded.</p>"}${draft.disclaimer ? `<p class="muted">${escapeHtml(draft.disclaimer)}</p>` : ""}`
+    : "<p>No outreach draft has been prepared.</p>";
   const body = `${controls}${intelligenceSubsection("Validated strict compiler output", compilerBody, true)}${intelligenceSubsection("AI interpretation", interpretationBody)}${intelligenceSubsection(`Cited evidence · ${reasons.length}`, evidenceBody)}${intelligenceSubsection(`Unresolved questions · ${questions.length}`, questionsBody)}${intelligenceSubsection("Outreach draft · not sent", draftBody)}`;
   return `<details class="intel-accordion ai-review" open aria-labelledby="aiReviewHeading"><summary><span class="intel-summary-copy"><b id="aiReviewHeading">Local AI intelligence</b><small>Validated compilation, interpretation, citations and draft</small></span><span class="intel-summary-badge">${compiler.canonical_company_id ? "Compiled" : "Not compiled"}</span><span class="intel-chevron" aria-hidden="true">⌄</span></summary><div class="intel-accordion-body">${body}</div></details>`;
 }
@@ -1081,14 +1452,43 @@ async function compileLeadWithAi() {
   if (!detailContext || aiBusy || !aiReady() || active(job?.status)) return;
   const target = { ...detailContext };
   const key = `${target.jobId}:${target.rowIndex}`;
-  const report = (text, error = false) => { aiReviewMessages.set(key, { text, error }); if (detailContext?.jobId === target.jobId && detailContext?.rowIndex === target.rowIndex) aiMessage("aiReviewStatus", text, error); };
-  aiBusy = true; syncAiControls(); report("Validating immutable evidence with the local compiler…");
+  const report = (text, error = false) => {
+    aiReviewMessages.set(key, { text, error });
+    if (
+      detailContext?.jobId === target.jobId &&
+      detailContext?.rowIndex === target.rowIndex
+    )
+      aiMessage("aiReviewStatus", text, error);
+  };
+  aiBusy = true;
+  syncAiControls();
+  report("Validating immutable evidence with the local compiler…");
   try {
-    await runAiTask({ task: "compile", model: $("aiModel").value, job_id: target.jobId, row_index: target.rowIndex }, report);
+    await runAiTask(
+      {
+        task: "compile",
+        model: $("aiModel").value,
+        job_id: target.jobId,
+        row_index: target.rowIndex,
+      },
+      report,
+    );
     const saved = await api("/api/jobs/" + encodeURIComponent(target.jobId));
-    historyPreviewCache.delete(target.jobId); report("Strict compiler output saved; every retained signal passed citation validation.");
-    if (job?.id === target.jobId) { job = saved; renderJob(); details(rows[target.rowIndex]); } else details(saved.rows?.[target.rowIndex], target);
-  } catch (err) { report(err.message, true); } finally { aiBusy = false; syncAiControls(); }
+    historyPreviewCache.delete(target.jobId);
+    report(
+      "Strict compiler output saved; every retained signal passed citation validation.",
+    );
+    if (job?.id === target.jobId) {
+      job = saved;
+      renderJob();
+      details(rows[target.rowIndex]);
+    } else details(saved.rows?.[target.rowIndex], target);
+  } catch (err) {
+    report(err.message, true);
+  } finally {
+    aiBusy = false;
+    syncAiControls();
+  }
 }
 async function reviewLeadWithAi() {
   if (!detailContext || aiBusy || !aiReady() || active(job?.status)) return;
@@ -1153,16 +1553,24 @@ function opportunityDetails(r) {
   const dimensions = Array.isArray(o.dimensions)
     ? o.dimensions
     : Object.entries(o.dimensions || {}).map(([key, d]) => ({ key, ...d }));
-  const body = `<p>Decision-maker: ${escapeHtml(r.decision_maker || "Unknown")} ${escapeHtml(r.decision_maker_role || "")}</p>${r.reference_id ? `<p class="notice">Rechecked from a historical library entry dated ${escapeHtml(r.reference_as_of)}. Old contact details and scores were not copied into this result.</p>` : ""}<p>${o.status && o.status !== "not_requested" ? `${Number(o.supported_points || 0)}/100 supported opportunity points · ${Number(o.coverage || 0)}% of dimensions have evidence. Unknown dimensions receive no awarded points; this is not a conversion or budget prediction.` : "Offer scoring not requested or not assessed in this earlier run."}</p>${dimensions.length ? `<div class="table-wrap"><table><thead><tr><th>DIMENSION</th><th>WEIGHT</th><th>SUPPORTED SCORE</th><th>REASON</th></tr></thead><tbody>${dimensions.map((d) => `<tr><td>${escapeHtml(d.label || d.name || d.key)}</td><td>${Number(d.weight)}%</td><td>${d.value === null || d.value === undefined ? "Unknown" : `${Number(d.value)}/10`}</td><td>${escapeHtml(d.reason)}</td></tr>`).join("")}</tbody></table></div>` : ""}${intelligenceSubsection("Published workflow signals",
+  const body = `<p>Decision-maker: ${escapeHtml(r.decision_maker || "Unknown")} ${escapeHtml(r.decision_maker_role || "")}</p>${r.reference_id ? `<p class="notice">Rechecked from a historical library entry dated ${escapeHtml(r.reference_as_of)}. Old contact details and scores were not copied into this result.</p>` : ""}<p>${o.status && o.status !== "not_requested" ? `${Number(o.supported_points || 0)}/100 supported opportunity points · ${Number(o.coverage || 0)}% of dimensions have evidence. Unknown dimensions receive no awarded points; this is not a conversion or budget prediction.` : "Offer scoring not requested or not assessed in this earlier run."}</p>${dimensions.length ? `<div class="table-wrap"><table><thead><tr><th>DIMENSION</th><th>WEIGHT</th><th>SUPPORTED SCORE</th><th>REASON</th></tr></thead><tbody>${dimensions.map((d) => `<tr><td>${escapeHtml(d.label || d.name || d.key)}</td><td>${Number(d.weight)}%</td><td>${d.value === null || d.value === undefined ? "Unknown" : `${Number(d.value)}/10`}</td><td>${escapeHtml(d.reason)}</td></tr>`).join("")}</tbody></table></div>` : ""}${intelligenceSubsection(
+    "Published workflow signals",
     parseList(r.workflow_signals)
       .map(
         (s) =>
           `<div class="evidence"><b>${escapeHtml(s.kind.replaceAll("_", " "))} · published page claim</b><p>${escapeHtml(s.excerpt || s.value)}</p>${link(s.url)}</div>`,
       )
       .join("") ||
-    "<p>No supported signals recorded. No visible tool does not mean no software, and a report does not prove manual work.</p>"
-  , true)}${(o.assumptions || []).map((x) => `<p>Unresolved: ${escapeHtml(x)}</p>`).join("")}`;
-  return intelligenceSection("Workflow & offer research", "Decision-maker, opportunity dimensions and published workflow signals", body, true, `${Number(o.supported_points || 0)}/100`);
+      "<p>No supported signals recorded. No visible tool does not mean no software, and a report does not prove manual work.</p>",
+    true,
+  )}${(o.assumptions || []).map((x) => `<p>Unresolved: ${escapeHtml(x)}</p>`).join("")}`;
+  return intelligenceSection(
+    "Workflow & offer research",
+    "Decision-maker, opportunity dimensions and published workflow signals",
+    body,
+    true,
+    `${Number(o.supported_points || 0)}/100`,
+  );
 }
 function parseList(value) {
   try {
@@ -1175,7 +1583,18 @@ $("closeDialog").addEventListener("click", () => $("leadDialog").close());
 function renderDiagnostics() {
   const root = job.root_cause_analysis;
   $("rootCauseSummary").innerHTML = root
-    ? `<h3>Underlying-cause analysis</h3><p class="notice">${escapeHtml(root.conclusion)}</p><div class="chips"><span class="chip">Requested maximum: ${Number(root.requested_maximum || 0)}</span><span class="chip">Unique results: ${Number(root.unique_results || 0)}</span><span class="chip">Shortfall: ${Number(root.shortfall || 0)}</span><span class="chip">Maps queries attempted: ${Number(root.maps?.attempted_queries || 0)}</span><span class="chip">Merged duplicates: ${Number(root.deduplication?.merged_count || 0)}</span></div>${root.website_failure_summary ? `<h3>Website failure categories</h3><div class="chips">${Object.entries(root.website_failure_summary).map(([kind, count]) => `<span class="chip">${escapeHtml(kind.replaceAll("_", " "))}: ${Number(count)}</span>`).join("")}</div>` : ""}${(root.causes || []).map((cause) => `<div class="evidence"><span class="badge">${escapeHtml(cause.kind.replaceAll("_", " "))}</span><b>${escapeHtml(cause.impact)}</b><small>${escapeHtml(cause.evidence)}</small>${cause.query ? `<small>Query: ${escapeHtml(cause.query)}</small>` : ""}</div>`).join("")}${root.deduplication?.merge_ledger?.length ? `<details><summary>Exact duplicate merge ledger</summary><pre>${escapeHtml(JSON.stringify(root.deduplication.merge_ledger, null, 2))}</pre></details>` : ""}<details><summary>Interpretation limits</summary>${(root.limits || []).map((x) => `<p>${escapeHtml(x)}</p>`).join("")}</details>`
+    ? `<h3>Underlying-cause analysis</h3><p class="notice">${escapeHtml(root.conclusion)}</p><div class="chips"><span class="chip">Requested maximum: ${Number(root.requested_maximum || 0)}</span><span class="chip">Unique results: ${Number(root.unique_results || 0)}</span><span class="chip">Shortfall: ${Number(root.shortfall || 0)}</span><span class="chip">Maps queries attempted: ${Number(root.maps?.attempted_queries || 0)}</span><span class="chip">Merged duplicates: ${Number(root.deduplication?.merged_count || 0)}</span></div>${
+        root.website_failure_summary
+          ? `<h3>Website failure categories</h3><div class="chips">${Object.entries(
+              root.website_failure_summary,
+            )
+              .map(
+                ([kind, count]) =>
+                  `<span class="chip">${escapeHtml(kind.replaceAll("_", " "))}: ${Number(count)}</span>`,
+              )
+              .join("")}</div>`
+          : ""
+      }${(root.causes || []).map((cause) => `<div class="evidence"><span class="badge">${escapeHtml(cause.kind.replaceAll("_", " "))}</span><b>${escapeHtml(cause.impact)}</b><small>${escapeHtml(cause.evidence)}</small>${cause.query ? `<small>Query: ${escapeHtml(cause.query)}</small>` : ""}</div>`).join("")}${root.deduplication?.merge_ledger?.length ? `<details><summary>Exact duplicate merge ledger</summary><pre>${escapeHtml(JSON.stringify(root.deduplication.merge_ledger, null, 2))}</pre></details>` : ""}<details><summary>Interpretation limits</summary>${(root.limits || []).map((x) => `<p>${escapeHtml(x)}</p>`).join("")}</details>`
     : `<h3>Underlying-cause analysis</h3><p>This earlier run does not contain the new cause report.</p>`;
   $("savedStrategy").innerHTML =
     "<details><summary>Five-stage strategy, platform research & executed queries</summary>" +
@@ -1211,8 +1630,14 @@ function tab(mode) {
   $("verificationPanel").classList.toggle("hidden", mode !== "verification");
   $("diagnosticsPanel").classList.toggle("hidden", mode !== "diagnostics");
   $("resultsTab").setAttribute("aria-selected", String(mode === "results"));
-  $("verificationTab").setAttribute("aria-selected", String(mode === "verification"));
-  $("diagnosticsTab").setAttribute("aria-selected", String(mode === "diagnostics"));
+  $("verificationTab").setAttribute(
+    "aria-selected",
+    String(mode === "verification"),
+  );
+  $("diagnosticsTab").setAttribute(
+    "aria-selected",
+    String(mode === "diagnostics"),
+  );
 }
 $("resultsTab").addEventListener("click", () => tab("results"));
 $("verificationTab").addEventListener("click", () => tab("verification"));
@@ -1226,14 +1651,19 @@ async function loadBrowserProfile() {
       : status.profile_exists
         ? "Saved profile ready; browser currently closed"
         : "Ready for first-time sign-in";
-    const facebook = status.services?.facebook === false ? " Facebook is excluded." : "";
+    const facebook =
+      status.services?.facebook === false ? " Facebook is excluded." : "";
     const checkpoint = status.search_checkpoint || {};
     const checkpointText = checkpoint.paused
       ? ` Browser web search is paused until you resume it: ${checkpoint.reason}`
       : " Automated Google/Bing web search is disabled; verification uses the public-search fallback.";
-    $("browserProfileStatus").textContent = `${label}. Your session stays in ${status.profile_path}.${facebook}${checkpointText}`;
+    $("browserProfileStatus").textContent =
+      `${label}. Your session stays in ${status.profile_path}.${facebook}${checkpointText}`;
     $("openFacebookProfile").disabled = status.services?.facebook === false;
-    $("openFacebookProfile").textContent = status.services?.facebook === false ? "Facebook disabled" : "Open Facebook login";
+    $("openFacebookProfile").textContent =
+      status.services?.facebook === false
+        ? "Facebook disabled"
+        : "Open Facebook login";
     $("resumeBrowserSearch").disabled = !checkpoint.paused;
   } catch (err) {
     $("browserProfileStatus").textContent = err.message;
@@ -1241,25 +1671,39 @@ async function loadBrowserProfile() {
 }
 
 async function openBrowserProfile(service) {
-  const buttons = ["openFacebookProfile", "openLinkedInProfile", "openMapsProfile", "openAllProfiles"];
+  const buttons = [
+    "openFacebookProfile",
+    "openLinkedInProfile",
+    "openMapsProfile",
+    "openAllProfiles",
+  ];
   buttons.forEach((id) => ($(id).disabled = true));
-  $("browserProfileStatus").textContent = "Opening your dedicated Chrome profile…";
+  $("browserProfileStatus").textContent =
+    "Opening your dedicated Chrome profile…";
   try {
     const status = await api("/api/browser/open", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ service }),
     });
-    $("browserProfileStatus").textContent = status.message + " Complete any login or security check in Chrome yourself.";
+    $("browserProfileStatus").textContent =
+      status.message +
+      " Complete any login or security check in Chrome yourself.";
   } catch (err) {
     $("browserProfileStatus").textContent = err.message;
   } finally {
     buttons.forEach((id) => ($(id).disabled = false));
   }
 }
-$("openFacebookProfile").addEventListener("click", () => openBrowserProfile("facebook"));
-$("openLinkedInProfile").addEventListener("click", () => openBrowserProfile("linkedin"));
-$("openMapsProfile").addEventListener("click", () => openBrowserProfile("maps"));
+$("openFacebookProfile").addEventListener("click", () =>
+  openBrowserProfile("facebook"),
+);
+$("openLinkedInProfile").addEventListener("click", () =>
+  openBrowserProfile("linkedin"),
+);
+$("openMapsProfile").addEventListener("click", () =>
+  openBrowserProfile("maps"),
+);
 $("openAllProfiles").addEventListener("click", () => openBrowserProfile("all"));
 $("resumeBrowserSearch").addEventListener("click", async () => {
   $("resumeBrowserSearch").disabled = true;
@@ -1274,7 +1718,8 @@ $("resumeBrowserSearch").addEventListener("click", async () => {
       headers: { "Content-Type": "application/json" },
       body: "{}",
     });
-    $("browserProfileStatus").textContent = "Google Maps opened and the saved pause was cleared. If a challenge appears, complete it in Chrome; the app will pause again instead of retrying.";
+    $("browserProfileStatus").textContent =
+      "Google Maps opened and the saved pause was cleared. If a challenge appears, complete it in Chrome; the app will pause again instead of retrying.";
   } catch (err) {
     $("browserProfileStatus").textContent = err.message;
   } finally {
@@ -1287,35 +1732,97 @@ function renderVerification() {
     .map((row) => ({ row, report: parseObject(row.verification) }))
     .filter((item) => item.report.status)
     .sort((a, b) => {
-      const match = (value) => (value === "service_match" ? 0 : value === "category_match" ? 1 : 2);
-      return match(a.row.match_status) - match(b.row.match_status) || a.row.name.localeCompare(b.row.name);
+      const match = (value) =>
+        value === "service_match" ? 0 : value === "category_match" ? 1 : 2;
+      return (
+        match(a.row.match_status) - match(b.row.match_status) ||
+        a.row.name.localeCompare(b.row.name)
+      );
     });
   const summary = verificationTask?.summary || {};
   $("verificationStats").innerHTML = [
     ["Verified", summary.verified ?? reports.length],
-    ["Websites reachable", summary.websites_reachable ?? reports.filter((x) => x.report.website?.status === "reachable").length],
-    ["Social profiles", summary.social_profiles_listed ?? reports.filter((x) => Object.values(x.report.socials || {}).some((v) => v.url)).length],
-    ["Ad tracking signals", summary.ad_tracking_signals ?? reports.filter((x) => x.report.ads?.tracking_signals?.length).length],
-    ["Extra review sources", summary.review_sources_found ?? reports.filter((x) => x.report.reviews?.other_sources?.length).length],
-    ["Duplicates consolidated", summary.duplicates_consolidated ?? job?.organization?.duplicates_consolidated ?? 0],
-    ["Recommended emails", summary.recommended_email_records ?? job?.organization?.recommended_email_records ?? 0],
+    [
+      "Websites reachable",
+      summary.websites_reachable ??
+        reports.filter((x) => x.report.website?.status === "reachable").length,
+    ],
+    [
+      "Social profiles",
+      summary.social_profiles_listed ??
+        reports.filter((x) =>
+          Object.values(x.report.socials || {}).some((v) => v.url),
+        ).length,
+    ],
+    [
+      "Ad tracking signals",
+      summary.ad_tracking_signals ??
+        reports.filter((x) => x.report.ads?.tracking_signals?.length).length,
+    ],
+    [
+      "Extra review sources",
+      summary.review_sources_found ??
+        reports.filter((x) => x.report.reviews?.other_sources?.length).length,
+    ],
+    [
+      "Duplicates consolidated",
+      summary.duplicates_consolidated ??
+        job?.organization?.duplicates_consolidated ??
+        0,
+    ],
+    [
+      "Recommended emails",
+      summary.recommended_email_records ??
+        job?.organization?.recommended_email_records ??
+        0,
+    ],
     ["Contacts restored", summary.contacts_restored_from_memory ?? 0],
-    ["Chrome social candidates", summary.chrome_social_candidates ?? reports.reduce((total, item) => total + (item.report.social_discovery?.candidates?.length || 0), 0)],
-    ["Browser checkpoints", summary.chrome_manual_checkpoints ?? reports.filter((item) => String(item.report.social_discovery?.status || "").startsWith("manual_checkpoint")).length],
-  ].map(([label, value]) => `<span class="chip">${label}: ${Number(value) || 0}</span>`).join("");
+    [
+      "Chrome social candidates",
+      summary.chrome_social_candidates ??
+        reports.reduce(
+          (total, item) =>
+            total + (item.report.social_discovery?.candidates?.length || 0),
+          0,
+        ),
+    ],
+    [
+      "Browser checkpoints",
+      summary.chrome_manual_checkpoints ??
+        reports.filter((item) =>
+          String(item.report.social_discovery?.status || "").startsWith(
+            "manual_checkpoint",
+          ),
+        ).length,
+    ],
+  ]
+    .map(
+      ([label, value]) =>
+        `<span class="chip">${label}: ${Number(value) || 0}</span>`,
+    )
+    .join("");
   $("verificationList").innerHTML = reports.length
-    ? reports.map(({ row, report }) => {
-        const originalIndex = rows.indexOf(row);
-        const socialCount = Object.values(report.socials || {}).filter((value) => value.url).length;
-        const reviewCount = report.reviews?.google_maps?.review_count || 0;
-        const tracking = report.ads?.tracking_signals?.length || 0;
-        return `<article class="verification-item"><div><b>${escapeHtml(row.name)}</b><small>${escapeHtml(row.address || row.city)}</small><span class="badge ${row.match_status === "candidate" ? "candidate" : ""}">${escapeHtml((row.match_status || "candidate").replaceAll("_", " "))}</span></div><div><strong>Email</strong><span>${recommendedEmail(row) ? "Recommended" : row.email ? "Excluded / review" : "Not found"}</span></div><div><strong>Website</strong><span>${escapeHtml((report.website?.status || "unknown").replaceAll("_", " "))}</span></div><div><strong>Social</strong><span>${socialCount} published link${socialCount === 1 ? "" : "s"}</span></div><div><strong>Ads</strong><span>${tracking ? `${tracking} tracking signal${tracking === 1 ? "" : "s"}` : "Campaign not verified"}</span></div><div><strong>Reviews</strong><span>${escapeHtml(report.reviews?.google_maps?.rating || "—")} · ${escapeHtml(reviewCount)}</span></div><button class="secondary verification-detail" data-index="${originalIndex}">Details + local AI</button></article>`;
-      }).join("")
+    ? reports
+        .map(({ row, report }) => {
+          const originalIndex = rows.indexOf(row);
+          const socialCount = Object.values(report.socials || {}).filter(
+            (value) => value.url,
+          ).length;
+          const reviewCount = report.reviews?.google_maps?.review_count || 0;
+          const tracking = report.ads?.tracking_signals?.length || 0;
+          return `<article class="verification-item"><div><b>${escapeHtml(row.name)}</b><small>${escapeHtml(row.address || row.city)}</small><span class="badge ${row.match_status === "candidate" ? "candidate" : ""}">${escapeHtml((row.match_status || "candidate").replaceAll("_", " "))}</span></div><div><strong>Email</strong><span>${recommendedEmail(row) ? "Recommended" : row.email ? "Excluded / review" : "Not found"}</span></div><div><strong>Website</strong><span>${escapeHtml((report.website?.status || "unknown").replaceAll("_", " "))}</span></div><div><strong>Social</strong><span>${socialCount} published link${socialCount === 1 ? "" : "s"}</span></div><div><strong>Ads</strong><span>${tracking ? `${tracking} tracking signal${tracking === 1 ? "" : "s"}` : "Campaign not verified"}</span></div><div><strong>Reviews</strong><span>${escapeHtml(report.reviews?.google_maps?.rating || "—")} · ${escapeHtml(reviewCount)}</span></div><button class="secondary verification-detail" data-index="${originalIndex}">Details + local AI</button></article>`;
+        })
+        .join("")
     : "<p>No second-round reports are saved for this search yet.</p>";
-  document.querySelectorAll(".verification-detail").forEach((button) =>
-    button.addEventListener("click", () => details(rows[Number(button.dataset.index)])),
-  );
-  const running = verificationTask && ["queued", "running"].includes(verificationTask.status);
+  document
+    .querySelectorAll(".verification-detail")
+    .forEach((button) =>
+      button.addEventListener("click", () =>
+        details(rows[Number(button.dataset.index)]),
+      ),
+    );
+  const running =
+    verificationTask && ["queued", "running"].includes(verificationTask.status);
   $("startVerification").disabled = !job || active(job.status) || running;
   $("verificationScope").disabled = running;
   $("verificationProgress").value = verificationTask?.progress || 0;
@@ -1323,20 +1830,32 @@ function renderVerification() {
   const unfinished = (row) => {
     const report = parseObject(row.verification);
     const discoveryStatus = String(report.social_discovery?.status || "");
-    return report.status !== "complete" || !discoveryStatus || ["cancelled", "failed", "not_run"].includes(discoveryStatus);
+    return (
+      report.status !== "complete" ||
+      !discoveryStatus ||
+      ["cancelled", "failed", "not_run"].includes(discoveryStatus)
+    );
   };
-  const selectedCount = selectedScope === "all"
-    ? rows.length
-    : selectedScope === "unfinished"
-      ? rows.filter(unfinished).length
-      : rows.filter((row) => row.match_status !== "candidate").length;
-  $("startVerification").textContent = `Verify ${selectedCount} of ${rows.length} leads`;
-  $("verificationStatus").textContent = verificationTask?.message || (reports.length ? `${reports.length} saved verification reports. The selected rerun will verify ${selectedCount} of ${rows.length} retained leads.` : `Ready to verify ${selectedCount} of ${rows.length} retained leads.`);
+  const selectedCount =
+    selectedScope === "all"
+      ? rows.length
+      : selectedScope === "unfinished"
+        ? rows.filter(unfinished).length
+        : rows.filter((row) => row.match_status !== "candidate").length;
+  $("startVerification").textContent =
+    `Verify ${selectedCount} of ${rows.length} leads`;
+  $("verificationStatus").textContent =
+    verificationTask?.message ||
+    (reports.length
+      ? `${reports.length} saved verification reports. The selected rerun will verify ${selectedCount} of ${rows.length} retained leads.`
+      : `Ready to verify ${selectedCount} of ${rows.length} retained leads.`);
 }
 
 async function pollVerification(taskId) {
   try {
-    verificationTask = await api(`/api/verification/tasks/${encodeURIComponent(taskId)}`);
+    verificationTask = await api(
+      `/api/verification/tasks/${encodeURIComponent(taskId)}`,
+    );
     renderVerification();
     if (["queued", "running"].includes(verificationTask.status)) {
       verificationPollTimer = setTimeout(() => pollVerification(taskId), 1200);
@@ -1362,7 +1881,10 @@ $("startVerification").addEventListener("click", async () => {
     const created = await api("/api/verification/start", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ job_id: job.id, scope: $("verificationScope").value }),
+      body: JSON.stringify({
+        job_id: job.id,
+        scope: $("verificationScope").value,
+      }),
     });
     await pollVerification(created.id);
   } catch (err) {
@@ -1540,12 +2062,13 @@ async function loadHistoryPreviews(detail) {
 }
 async function loadLibrary() {
   try {
-    [library, intelligenceOverview, intelligenceQueue, nichePacks] = await Promise.all([
-      api("/api/library"),
-      api("/api/intelligence/overview"),
-      api("/api/intelligence/queue"),
-      api("/api/intelligence/niche-packs"),
-    ]);
+    [library, intelligenceOverview, intelligenceQueue, nichePacks] =
+      await Promise.all([
+        api("/api/library"),
+        api("/api/intelligence/overview"),
+        api("/api/intelligence/queue"),
+        api("/api/intelligence/niche-packs"),
+      ]);
     $("librarySummary").textContent =
       `${library.collections?.length || 0} compiled research collection${library.collections?.length === 1 ? "" : "s"} · ${library.compiled_record_count || 0} organized current prospects · ${library.record_count || 0} historical references retained separately.`;
     renderLibrary();
@@ -1567,14 +2090,29 @@ function renderIntelligence() {
     ["Campaign experiments", overview.experiments],
     ["Positive outcomes", overview.performance?.positive_outcomes],
     ["Websites monitored", overview.watcher?.scheduled],
-  ].map(([label, value]) => `<span class="chip">${label}: ${Number(value) || 0}</span>`).join("");
-  const items = (intelligenceQueue || []).filter((item) => item.status === "open").slice(0, 12);
+  ]
+    .map(
+      ([label, value]) =>
+        `<span class="chip">${label}: ${Number(value) || 0}</span>`,
+    )
+    .join("");
+  const items = (intelligenceQueue || [])
+    .filter((item) => item.status === "open")
+    .slice(0, 12);
   if ($("nextActionCount")) {
-    const total = (intelligenceQueue || []).filter((item) => item.status === "open").length;
-    $("nextActionCount").textContent = `${total} prioritized action${total === 1 ? "" : "s"} · expand only when needed`;
+    const total = (intelligenceQueue || []).filter(
+      (item) => item.status === "open",
+    ).length;
+    $("nextActionCount").textContent =
+      `${total} prioritized action${total === 1 ? "" : "s"} · expand only when needed`;
   }
   $("intelligenceQueue").innerHTML = items.length
-    ? items.map((item, index) => `<article class="intelligence-action"><div><b>${escapeHtml(item.name)}</b><small>${escapeHtml([item.city, item.niche].filter(Boolean).join(" · "))}</small></div><span class="badge ${item.action === "ready_for_outreach" ? "" : "candidate"}">${escapeHtml(item.action.replaceAll("_", " "))}</span><p>${escapeHtml(item.reason)}</p><div class="intelligence-actions"><button class="ghost small intelligence-detail" type="button" data-index="${index}" aria-label="View intelligence details for ${escapeHtml(item.name)}">Details</button>${item.lead?.website || item.lead?.linkedin ? `<button class="ghost small intelligence-browser" type="button" data-index="${index}">Open review</button>` : ""}${item.action === "manual_browser_review" ? `<button class="ghost small intelligence-complete" type="button" data-index="${index}">Mark reviewed</button>` : ""}</div></article>`).join("")
+    ? items
+        .map(
+          (item, index) =>
+            `<article class="intelligence-action"><div><b>${escapeHtml(item.name)}</b><small>${escapeHtml([item.city, item.niche].filter(Boolean).join(" · "))}</small></div><span class="badge ${item.action === "ready_for_outreach" ? "" : "candidate"}">${escapeHtml(item.action.replaceAll("_", " "))}</span><p>${escapeHtml(item.reason)}</p><div class="intelligence-actions"><button class="ghost small intelligence-detail" type="button" data-index="${index}" aria-label="View intelligence details for ${escapeHtml(item.name)}">Details</button>${item.lead?.website || item.lead?.linkedin ? `<button class="ghost small intelligence-browser" type="button" data-index="${index}">Open review</button>` : ""}${item.action === "manual_browser_review" ? `<button class="ghost small intelligence-complete" type="button" data-index="${index}">Mark reviewed</button>` : ""}</div></article>`,
+        )
+        .join("")
     : "<p>Complete a verification round to create the first next-action queue.</p>";
   document.querySelectorAll(".intelligence-detail").forEach((button) =>
     button.addEventListener("click", () => {
@@ -1587,10 +2125,20 @@ function renderIntelligence() {
       const item = items[Number(button.dataset.index)];
       button.disabled = true;
       try {
-        await api("/api/browser/open-url", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ company_id: item.company_id, url: item.lead.linkedin || item.lead.website }) });
+        await api("/api/browser/open-url", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            company_id: item.company_id,
+            url: item.lead.linkedin || item.lead.website,
+          }),
+        });
         toast("Opened in your persistent research browser.");
-      } catch (err) { toast(err.message, "error"); }
-      finally { button.disabled = false; }
+      } catch (err) {
+        toast(err.message, "error");
+      } finally {
+        button.disabled = false;
+      }
     }),
   );
   document.querySelectorAll(".intelligence-complete").forEach((button) =>
@@ -1598,22 +2146,44 @@ function renderIntelligence() {
       const item = items[Number(button.dataset.index)];
       button.disabled = true;
       try {
-        await api("/api/intelligence/browser-checkpoints", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ company_id: item.company_id, service: item.lead.linkedin ? "linkedin" : "website", url: item.lead.linkedin || item.lead.website || item.lead.source_url, status: "complete", detail: "Marked reviewed by the user from the next-action queue." }) });
+        await api("/api/intelligence/browser-checkpoints", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            company_id: item.company_id,
+            service: item.lead.linkedin ? "linkedin" : "website",
+            url:
+              item.lead.linkedin || item.lead.website || item.lead.source_url,
+            status: "complete",
+            detail: "Marked reviewed by the user from the next-action queue.",
+          }),
+        });
         intelligenceQueue = await api("/api/intelligence/queue");
         renderIntelligence();
         toast("Review checkpoint saved and next action recalculated.");
-      } catch (err) { toast(err.message, "error"); button.disabled = false; }
+      } catch (err) {
+        toast(err.message, "error");
+        button.disabled = false;
+      }
     }),
   );
 }
 function listField(value) {
-  return String(value || "").split(/\r?\n/).map((item) => item.trim()).filter(Boolean);
+  return String(value || "")
+    .split(/\r?\n/)
+    .map((item) => item.trim())
+    .filter(Boolean);
 }
 function renderNichePacks() {
   const select = $("nichePackSelect");
   if (!select) return;
   const current = select.value;
-  select.innerHTML = nichePacks.map((pack, index) => `<option value="${index}">${escapeHtml(pack.name)}</option>`).join("");
+  select.innerHTML = nichePacks
+    .map(
+      (pack, index) =>
+        `<option value="${index}">${escapeHtml(pack.name)}</option>`,
+    )
+    .join("");
   if (current && Number(current) < nichePacks.length) select.value = current;
   showNichePack();
 }
@@ -1625,33 +2195,56 @@ function showNichePack() {
   $("nichePackExclusions").value = (pack.exclusions || []).join("\n");
   $("nichePackRoles").value = (pack.decision_maker_roles || []).join("\n");
   $("nichePackSignals").value = (pack.opportunity_signals || []).join("\n");
-  $("nichePackStatus").textContent = `${pack.generated_by === "user_approved" ? "User-approved" : "Local deterministic"} pack · ${(pack.enrichment_waterfall || []).length} enrichment stages.`;
+  $("nichePackStatus").textContent =
+    `${pack.generated_by === "user_approved" ? "User-approved" : "Local deterministic"} pack · ${(pack.enrichment_waterfall || []).length} enrichment stages.`;
 }
 $("nichePackSelect").addEventListener("change", showNichePack);
 $("nichePackForm").addEventListener("submit", async (event) => {
   event.preventDefault();
   const selected = nichePacks[Number($("nichePackSelect").value)] || {};
   try {
-    await api("/api/intelligence/niche-packs", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...selected, name: $("nichePackName").value, synonyms: listField($("nichePackSynonyms").value), exclusions: listField($("nichePackExclusions").value), decision_maker_roles: listField($("nichePackRoles").value), opportunity_signals: listField($("nichePackSignals").value) }) });
+    await api("/api/intelligence/niche-packs", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        ...selected,
+        name: $("nichePackName").value,
+        synonyms: listField($("nichePackSynonyms").value),
+        exclusions: listField($("nichePackExclusions").value),
+        decision_maker_roles: listField($("nichePackRoles").value),
+        opportunity_signals: listField($("nichePackSignals").value),
+      }),
+    });
     nichePacks = await api("/api/intelligence/niche-packs");
     renderNichePacks();
-    $("nichePackStatus").textContent = "Niche pack saved. New searches will use this terminology and enrichment order.";
-  } catch (err) { $("nichePackStatus").textContent = err.message; }
+    $("nichePackStatus").textContent =
+      "Niche pack saved. New searches will use this terminology and enrichment order.";
+  } catch (err) {
+    $("nichePackStatus").textContent = err.message;
+  }
 });
 function renderLibrary() {
   const query = $("libraryFilter").value.toLowerCase();
-  const collections = (library?.collections || []).map((collection) => {
-    const collectionMatch = [collection.title, collection.niche, collection.location]
-      .join(" ")
-      .toLowerCase()
-      .includes(query);
-    return {
-      ...collection,
-      visibleRows: (collection.rows || []).filter(
-        (row) => collectionMatch || JSON.stringify(row).toLowerCase().includes(query),
-      ),
-    };
-  }).filter((collection) => collection.visibleRows.length);
+  const collections = (library?.collections || [])
+    .map((collection) => {
+      const collectionMatch = [
+        collection.title,
+        collection.niche,
+        collection.location,
+      ]
+        .join(" ")
+        .toLowerCase()
+        .includes(query);
+      return {
+        ...collection,
+        visibleRows: (collection.rows || []).filter(
+          (row) =>
+            collectionMatch ||
+            JSON.stringify(row).toLowerCase().includes(query),
+        ),
+      };
+    })
+    .filter((collection) => collection.visibleRows.length);
   const records = (library?.records || []).filter((r) =>
     JSON.stringify(r).toLowerCase().includes(query),
   );
@@ -1660,38 +2253,69 @@ function renderLibrary() {
     sort === "name"
       ? a.name.localeCompare(b.name)
       : sort === "score"
-        ? Number(b.historical_score ?? -1) - Number(a.historical_score ?? -1) || a.name.localeCompare(b.name)
+        ? Number(b.historical_score ?? -1) - Number(a.historical_score ?? -1) ||
+          a.name.localeCompare(b.name)
         : sort === "recheck"
-          ? Number(Boolean(b.warnings?.length)) - Number(Boolean(a.warnings?.length)) || a.name.localeCompare(b.name)
-          : [a.city, a.state, a.name].join(" ").localeCompare([b.city, b.state, b.name].join(" ")),
+          ? Number(Boolean(b.warnings?.length)) -
+              Number(Boolean(a.warnings?.length)) ||
+            a.name.localeCompare(b.name)
+          : [a.city, a.state, a.name]
+              .join(" ")
+              .localeCompare([b.city, b.state, b.name].join(" ")),
   );
-  const card = (r) => `<article class="reference-item"><div class="reference-heading"><div class="check-row"><input type="checkbox" class="reference-select" id="ref-${escapeHtml(r.id)}" data-id="${escapeHtml(r.id)}" ${selectedReferences.has(r.id) ? "checked" : ""}/><label for="ref-${escapeHtml(r.id)}">${escapeHtml(r.name)}<small>${escapeHtml([r.city, r.state].filter(Boolean).join(", "))}</small></label></div><span class="badge candidate">Historical · not reverified</span></div><p>${link(r.website)}<br>${escapeHtml(r.phone) || "Phone unknown"} · ${escapeHtml(r.email) || "Email unknown"}</p><p>Decision-maker (historical): ${escapeHtml(r.decision_maker || "Unknown")}${r.historical_score !== null && r.historical_score !== undefined ? ` · Original manual score: ${Number(r.historical_score)}/10` : ""}</p>${r.warnings?.length ? `<p class="notice">${r.warnings.map(escapeHtml).join(" · ")}</p>` : ""}<details><summary>Original research & provenance</summary><p><b>Workflow:</b> ${escapeHtml(r.workflow || "Unknown")}</p><p><b>Tools:</b> ${escapeHtml(r.software || "Unknown")}</p><p>${escapeHtml(r.original_notes)}</p><p>Historical campaign status: ${escapeHtml(r.original_status || "Not recorded")}</p><p class="muted">Original notes may contain inference. They are preserved, not promoted to verified current facts.</p>${link(r.source_url, "Original cited website")}${(r.provenance || []).map((p) => `<div class="evidence"><small>${escapeHtml(p.source_file || p.file || p.path || "Source CSV")}</small><pre>${escapeHtml(JSON.stringify(p, null, 2))}</pre></div>`).join("")}</details></article>`;
-  const compiledCard = (r, collection, rowIndex) => `<article class="reference-item compiled-item"><div class="reference-heading"><div><b>${escapeHtml(r.name || "Unnamed business")}</b><small>${escapeHtml(r.address || r.city || "Location not recorded")}</small></div><div><span class="badge">${Number(r.score) || 0}/100</span>${emailQualityBadge(r)}</div></div><p>${escapeHtml(r.phone) || "Phone unknown"} · ${escapeHtml(r.email) || "Email unknown"}<br>${link(r.website, "Website ↗")} ${link(r.source_url, "Primary source ↗")}</p><p><b>${escapeHtml((r.operator_type || "not assessed").replaceAll("_", " "))}</b> · ${escapeHtml((r.match_status || "not assessed").replaceAll("_", " "))} · ${parseList(r.duplicate_summary).length} duplicate source${parseList(r.duplicate_summary).length === 1 ? "" : "s"} merged</p>${r.next_best_action ? `<p><span class="badge candidate">Next: ${escapeHtml(r.next_best_action.replaceAll("_", " "))}</span> · Contact confidence ${Number(r.contact_confidence) || 0}/100</p>` : ""}<button class="secondary library-detail" type="button" data-job="${escapeHtml(collection.job_id)}" data-row="${rowIndex}" aria-label="View research details for ${escapeHtml(r.name || "prospect")}">Details</button></article>`;
+  const card = (r) =>
+    `<article class="reference-item"><div class="reference-heading"><div class="check-row"><input type="checkbox" class="reference-select" id="ref-${escapeHtml(r.id)}" data-id="${escapeHtml(r.id)}" ${selectedReferences.has(r.id) ? "checked" : ""}/><label for="ref-${escapeHtml(r.id)}">${escapeHtml(r.name)}<small>${escapeHtml([r.city, r.state].filter(Boolean).join(", "))}</small></label></div><span class="badge candidate">Historical · not reverified</span></div><p>${link(r.website)}<br>${escapeHtml(r.phone) || "Phone unknown"} · ${escapeHtml(r.email) || "Email unknown"}</p><p>Decision-maker (historical): ${escapeHtml(r.decision_maker || "Unknown")}${r.historical_score !== null && r.historical_score !== undefined ? ` · Original manual score: ${Number(r.historical_score)}/10` : ""}</p>${r.warnings?.length ? `<p class="notice">${r.warnings.map(escapeHtml).join(" · ")}</p>` : ""}<details><summary>Original research & provenance</summary><p><b>Workflow:</b> ${escapeHtml(r.workflow || "Unknown")}</p><p><b>Tools:</b> ${escapeHtml(r.software || "Unknown")}</p><p>${escapeHtml(r.original_notes)}</p><p>Historical campaign status: ${escapeHtml(r.original_status || "Not recorded")}</p><p class="muted">Original notes may contain inference. They are preserved, not promoted to verified current facts.</p>${link(r.source_url, "Original cited website")}${(r.provenance || []).map((p) => `<div class="evidence"><small>${escapeHtml(p.source_file || p.file || p.path || "Source CSV")}</small><pre>${escapeHtml(JSON.stringify(p, null, 2))}</pre></div>`).join("")}</details></article>`;
+  const compiledCard = (r, collection, rowIndex) =>
+    `<article class="reference-item compiled-item"><div class="reference-heading"><div><b>${escapeHtml(r.name || "Unnamed business")}</b><small>${escapeHtml(r.address || r.city || "Location not recorded")}</small></div><div><span class="badge">${Number(r.score) || 0}/100</span>${emailQualityBadge(r)}</div></div><p>${escapeHtml(r.phone) || "Phone unknown"} · ${escapeHtml(r.email) || "Email unknown"}<br>${link(r.website, "Website ↗")} ${link(r.source_url, "Primary source ↗")}</p><p><b>${escapeHtml((r.operator_type || "not assessed").replaceAll("_", " "))}</b> · ${escapeHtml((r.match_status || "not assessed").replaceAll("_", " "))} · ${parseList(r.duplicate_summary).length} duplicate source${parseList(r.duplicate_summary).length === 1 ? "" : "s"} merged</p>${r.next_best_action ? `<p><span class="badge candidate">Next: ${escapeHtml(r.next_best_action.replaceAll("_", " "))}</span> · Contact confidence ${Number(r.contact_confidence) || 0}/100</p>` : ""}<button class="secondary library-detail" type="button" data-job="${escapeHtml(collection.job_id)}" data-row="${rowIndex}" aria-label="View research details for ${escapeHtml(r.name || "prospect")}">Details</button></article>`;
   const compiledMarkup = collections.length
-    ? `<section class="library-section"><div class="library-section-heading"><div><span class="eyebrow">COMPILED RESEARCH</span><h2>Finished, verified collections</h2></div><p>Canonical prospects with evidence, duplicate lineage, email quality, reviews, social profiles, ads signals and AI notes kept together.</p></div>${collections.map((collection) => {
-        const organization = collection.organization || {};
-        return `<details class="library-group compiled-collection"><summary><span><b>${escapeHtml(collection.title)}</b><small>${escapeHtml(String(collection.created_at || "").replace("T", " ").slice(0, 16))}</small></span><span>${collection.visibleRows.length} organized prospect${collection.visibleRows.length === 1 ? "" : "s"} · ${Number(organization.duplicates_consolidated) || 0} duplicates merged · ${Number(organization.recommended_email_records) || 0} recommended emails</span></summary><div class="compiled-collection-actions"><button class="ghost small library-open-run" type="button" data-job="${escapeHtml(collection.job_id)}">Open full run & diagnostics</button><span class="muted">Email AI: ${escapeHtml(String(organization.ai_status || "not used").replaceAll("_", " "))}</span></div><div class="compiled-rows">${collection.visibleRows.map((r) => compiledCard(r, collection, (collection.rows || []).indexOf(r))).join("")}</div></details>`;
-      }).join("")}</section>`
+    ? `<section class="library-section"><div class="library-section-heading"><div><span class="eyebrow">COMPILED RESEARCH</span><h2>Finished, verified collections</h2></div><p>Canonical prospects with evidence, duplicate lineage, email quality, reviews, social profiles, ads signals and AI notes kept together.</p></div>${collections
+        .map((collection) => {
+          const organization = collection.organization || {};
+          return `<details class="library-group compiled-collection"><summary><span><b>${escapeHtml(collection.title)}</b><small>${escapeHtml(
+            String(collection.created_at || "")
+              .replace("T", " ")
+              .slice(0, 16),
+          )}</small></span><span>${collection.visibleRows.length} organized prospect${collection.visibleRows.length === 1 ? "" : "s"} · ${Number(organization.duplicates_consolidated) || 0} duplicates merged · ${Number(organization.recommended_email_records) || 0} recommended emails</span></summary><div class="compiled-collection-actions"><button class="ghost small library-open-run" type="button" data-job="${escapeHtml(collection.job_id)}">Open full run & diagnostics</button><span class="muted">Email AI: ${escapeHtml(String(organization.ai_status || "not used").replaceAll("_", " "))}</span></div><div class="compiled-rows">${collection.visibleRows.map((r) => compiledCard(r, collection, (collection.rows || []).indexOf(r))).join("")}</div></details>`;
+        })
+        .join("")}</section>`
     : `<section class="library-section"><div class="library-section-heading"><div><span class="eyebrow">COMPILED RESEARCH</span><h2>No compiled collections yet</h2></div><p>Finish a search and its verification round. The organized result will appear here automatically.</p></div></section>`;
   const group = $("libraryGroup").value;
   let historicalMarkup = "";
   if (group === "none") {
-    historicalMarkup = records.map(card).join("") || "<p>No historical references match this filter.</p>";
+    historicalMarkup =
+      records.map(card).join("") ||
+      "<p>No historical references match this filter.</p>";
   } else {
     const grouped = new Map();
     for (const record of records) {
-      const key = group === "state" ? record.state || "State not recorded" : [record.city, record.state].filter(Boolean).join(", ") || "City not recorded";
+      const key =
+        group === "state"
+          ? record.state || "State not recorded"
+          : [record.city, record.state].filter(Boolean).join(", ") ||
+            "City not recorded";
       if (!grouped.has(key)) grouped.set(key, []);
       grouped.get(key).push(record);
     }
-    historicalMarkup = [...grouped.entries()].map(([label, items]) => `<details class="library-group" ${query ? "open" : ""}><summary>${escapeHtml(label)} · ${items.length} prospect${items.length === 1 ? "" : "s"}</summary><div>${items.map(card).join("")}</div></details>`).join("") || "<p>No historical references match this filter.</p>";
+    historicalMarkup =
+      [...grouped.entries()]
+        .map(
+          ([label, items]) =>
+            `<details class="library-group" ${query ? "open" : ""}><summary>${escapeHtml(label)} · ${items.length} prospect${items.length === 1 ? "" : "s"}</summary><div>${items.map(card).join("")}</div></details>`,
+        )
+        .join("") || "<p>No historical references match this filter.</p>";
   }
-  $("libraryList").innerHTML = `${compiledMarkup}<section class="library-section historical-library"><div class="library-section-heading"><div><span class="eyebrow">HISTORICAL IMPORT</span><h2>Original reference research</h2></div><p>Preserved with source provenance and kept separate from current compiled results.</p></div>${historicalMarkup}</section>`;
+  $("libraryList").innerHTML =
+    `${compiledMarkup}<section class="library-section historical-library"><div class="library-section-heading"><div><span class="eyebrow">HISTORICAL IMPORT</span><h2>Original reference research</h2></div><p>Preserved with source provenance and kept separate from current compiled results.</p></div>${historicalMarkup}</section>`;
   document.querySelectorAll(".library-detail").forEach((button) =>
     button.addEventListener("click", () => {
-      const collection = (library?.collections || []).find((item) => item.job_id === button.dataset.job);
+      const collection = (library?.collections || []).find(
+        (item) => item.job_id === button.dataset.job,
+      );
       const rowIndex = Number(button.dataset.row);
-      details(collection?.rows?.[rowIndex], { jobId: button.dataset.job, rowIndex });
+      details(collection?.rows?.[rowIndex], {
+        jobId: button.dataset.job,
+        rowIndex,
+      });
     }),
   );
   document.querySelectorAll(".library-open-run").forEach((button) =>
@@ -1806,7 +2430,9 @@ function campaignTitle(campaign) {
   return niche && niche !== source ? `${niche} · ${source}` : source;
 }
 function campaignCreated(campaign) {
-  return String(campaign.created_at || "").replace("T", " ").slice(0, 16);
+  return String(campaign.created_at || "")
+    .replace("T", " ")
+    .slice(0, 16);
 }
 function campaignMatchesFilter(campaign, term) {
   if (!term) return true;
@@ -1849,7 +2475,8 @@ function renderCampaignList() {
       const total = Number(item.total || 0);
       const sent = Number(item.sent || 0);
       const ready = Number(item.ready || 0);
-      const attention = Number(item.failed || 0) + Number(item.draft_failed || 0);
+      const attention =
+        Number(item.failed || 0) + Number(item.draft_failed || 0);
       const live = ["running", "drafting"].includes(item.status);
       return `<button class="campaign-row${selected ? " is-selected" : ""}" type="button" role="option" aria-selected="${selected}" data-id="${escapeHtml(item.id)}">
         <span class="campaign-row-head">
@@ -1885,7 +2512,9 @@ function renderCampaignDetail(campaign, connected) {
   const drafted = Math.min(Number(campaign.ai_drafted || 0), total);
   const dismissed = Math.max(0, total - drafted - drafting);
   const progress = total ? Math.round((drafted / total) * 100) : 0;
-  const experimentVariants = Object.entries(campaign.experiment_results?.variants || {});
+  const experimentVariants = Object.entries(
+    campaign.experiment_results?.variants || {},
+  );
   const actions = [];
   if (["draft", "paused"].includes(status) && ready > 0 && !drafting) {
     actions.push(
@@ -1948,10 +2577,20 @@ function renderCampaignDetail(campaign, connected) {
       }
       <p class="campaign-summary">${escapeHtml(campaign.message || "")}</p>
       <p class="fine-print left">Safety gate: suppression, prior outcomes and active duplicate recipients are checked again before sending. ${campaign.experiment?.variants > 1 ? `${Number(campaign.experiment.variants)} variants use stable assignment so results remain measurable.` : "This campaign uses one message approach."}</p>
-      ${experimentVariants.length ? `<div class="campaign-tags" aria-label="Observed experiment results">${experimentVariants.map(([variant, result]) => {
-        const outcomes = Object.entries(result.outcomes || {}).map(([name, count]) => `${name.replaceAll("_", " ")}: ${count}`).join(" · ");
-        return `<span class="tag"><b>Variant ${escapeHtml(variant)}</b> · ${Number(result.assigned || 0)} assigned${outcomes ? ` · ${escapeHtml(outcomes)}` : " · no outcome yet"}</span>`;
-      }).join("")}</div>` : ""}
+      ${
+        experimentVariants.length
+          ? `<div class="campaign-tags" aria-label="Observed experiment results">${experimentVariants
+              .map(([variant, result]) => {
+                const outcomes = Object.entries(result.outcomes || {})
+                  .map(
+                    ([name, count]) => `${name.replaceAll("_", " ")}: ${count}`,
+                  )
+                  .join(" · ");
+                return `<span class="tag"><b>Variant ${escapeHtml(variant)}</b> · ${Number(result.assigned || 0)} assigned${outcomes ? ` · ${escapeHtml(outcomes)}` : " · no outcome yet"}</span>`;
+              })
+              .join("")}</div>`
+          : ""
+      }
       ${(campaign.preflight_excluded || []).length ? `<details class="campaign-messages"><summary>${campaign.preflight_excluded.length} recipient${campaign.preflight_excluded.length === 1 ? "" : "s"} excluded by preflight</summary>${campaign.preflight_excluded.map((item) => `<div class="campaign-message"><b>${escapeHtml(item.name || item.email)}</b><p>${escapeHtml((item.issues || []).join(" · "))}</p></div>`).join("")}</details>` : ""}
       ${dismissed > 0 && !ready ? `<p class="campaign-summary muted-summary">${dismissed} message${dismissed === 1 ? "" : "s"} are no longer queued.</p>` : ""}
       <details class="campaign-messages" ${openCampaignPreviews.has(campaign.id) ? "open" : ""}><summary>Preview ${total} designated message${total === 1 ? "" : "s"}</summary>${messages || '<p class="campaign-empty">No messages yet.</p>'}</details>
@@ -2039,16 +2678,22 @@ $("campaignList").addEventListener("keydown", (event) => {
 $("campaignFilter").addEventListener("input", renderCampaignList);
 $("refreshCampaigns").addEventListener("click", () => loadOutreach());
 
-$("campaignDetail").addEventListener("toggle", (event) => {
-  if (!event.target.classList.contains("campaign-messages")) return;
-  if (!selectedCampaignId) return;
-  if (event.target.open) openCampaignPreviews.add(selectedCampaignId);
-  else openCampaignPreviews.delete(selectedCampaignId);
-}, true);
+$("campaignDetail").addEventListener(
+  "toggle",
+  (event) => {
+    if (!event.target.classList.contains("campaign-messages")) return;
+    if (!selectedCampaignId) return;
+    if (event.target.open) openCampaignPreviews.add(selectedCampaignId);
+    else openCampaignPreviews.delete(selectedCampaignId);
+  },
+  true,
+);
 $("campaignDetail").addEventListener("click", async (event) => {
   const button = event.target.closest("button[data-action]");
   if (!button) return;
-  const campaign = outreachCampaigns.find((item) => item.id === selectedCampaignId);
+  const campaign = outreachCampaigns.find(
+    (item) => item.id === selectedCampaignId,
+  );
   if (!campaign) return;
   const action = button.dataset.action;
   const status = $("campaignActionStatus");
@@ -2056,7 +2701,9 @@ $("campaignDetail").addEventListener("click", async (event) => {
     const running = outreachCampaigns.filter(
       (item) => item.status === "running",
     ).length;
-    const extra = running ? ` ${running} other campaign${running === 1 ? " is" : "s are"} already sending.` : "";
+    const extra = running
+      ? ` ${running} other campaign${running === 1 ? " is" : "s are"} already sending.`
+      : "";
     if (
       !confirm(
         `Send ${campaign.ready} reviewed one-to-one messages from “${campaignTitle(campaign)}” through Zoho now?${extra}`,
@@ -2126,7 +2773,8 @@ function syncCampaignPrepare() {
   const missingAi =
     useAi &&
     (!$("campaignAiModel").value || !$("campaignAiOffer").value.trim());
-  $("prepareCampaign").disabled = busy || take === 0 || missingTemplates || missingAi;
+  $("prepareCampaign").disabled =
+    busy || take === 0 || missingTemplates || missingAi;
   $("templateSelectedCount").textContent =
     `${selectedTemplateIds.size} selected`;
   renderTemplatePreview();
@@ -2149,7 +2797,8 @@ async function loadCampaignJobOptions(preferredId = null) {
       (item) => Number(item.record_count) > 0,
     );
     if (!saved.length) {
-      select.innerHTML = '<option value="">No compiled research collections yet</option>';
+      select.innerHTML =
+        '<option value="">No compiled research collections yet</option>';
       select.disabled = true;
       campaignJob = null;
       $("campaignJobHint").textContent =
@@ -2221,15 +2870,16 @@ function renderTemplatePreview() {
       (item, index) =>
         `<div class="preview-row"><span class="preview-index">${index + 1}</span><div><b>${escapeHtml(item.name)}</b><span>${escapeHtml(item.subject)}</span></div></div>`,
     )
-    .join("")}${chosen.length > 3 ? `<p class="fine-print left">+ ${chosen.length - 3} more template${chosen.length - 3 === 1 ? "" : "s"}</p>` : ""}`;
+    .join(
+      "",
+    )}${chosen.length > 3 ? `<p class="fine-print left">+ ${chosen.length - 3} more template${chosen.length - 3 === 1 ? "" : "s"}</p>` : ""}`;
 }
 function renderTemplatePicker() {
   const picker = $("campaignTemplates");
   const term = $("templateSearch").value.trim().toLowerCase();
   const visible = outreachTemplates.filter(
     (item) =>
-      !term ||
-      `${item.name} ${item.niche}`.toLowerCase().includes(term),
+      !term || `${item.name} ${item.niche}`.toLowerCase().includes(term),
   );
   if (!outreachTemplates.length) {
     picker.innerHTML = `<div class="empty-state"><b>No templates yet</b><p>Create your first reusable message in the Templates tab.</p><button class="secondary" type="button" data-goto="templates">Open templates</button></div>`;
@@ -2260,7 +2910,9 @@ $("campaignTemplates").addEventListener("change", (event) => {
   input.checked
     ? selectedTemplateIds.add(input.value)
     : selectedTemplateIds.delete(input.value);
-  input.closest(".template-option")?.classList.toggle("is-checked", input.checked);
+  input
+    .closest(".template-option")
+    ?.classList.toggle("is-checked", input.checked);
   syncCampaignPrepare();
 });
 $("campaignTemplates").addEventListener("click", (event) => {
@@ -2311,7 +2963,11 @@ function renderTemplateList() {
       (item) => `<article class="template-item">
         <div class="template-item-head"><b>${escapeHtml(item.name)}</b><span class="tag">${escapeHtml(item.niche)}</span></div>
         <p class="template-item-subject">${escapeHtml(item.subject)}</p>
-        <p class="template-item-body">${escapeHtml(String(item.body || "").replace(/\s+/g, " ").slice(0, 140))}${String(item.body || "").length > 140 ? "…" : ""}</p>
+        <p class="template-item-body">${escapeHtml(
+          String(item.body || "")
+            .replace(/\s+/g, " ")
+            .slice(0, 140),
+        )}${String(item.body || "").length > 140 ? "…" : ""}</p>
         <div class="template-item-actions">
           <button class="ghost small" type="button" data-edit="${escapeHtml(item.id)}">Edit</button>
           <button class="ghost small" type="button" data-use="${escapeHtml(item.id)}">Use in campaign</button>
@@ -2324,7 +2980,9 @@ $("templateList").addEventListener("click", (event) => {
   const edit = event.target.closest("button[data-edit]");
   const use = event.target.closest("button[data-use]");
   if (edit) {
-    const template = outreachTemplates.find((item) => item.id === edit.dataset.edit);
+    const template = outreachTemplates.find(
+      (item) => item.id === edit.dataset.edit,
+    );
     if (!template) return;
     editingTemplateId = template.id;
     $("templateFormTitle").textContent = "Edit template";
@@ -2332,7 +2990,8 @@ $("templateList").addEventListener("click", (event) => {
     $("templateNiche").value = template.niche;
     $("templateSubject").value = template.subject;
     $("templateBody").value = template.body;
-    $("templateStatus").textContent = `Editing “${template.name}”. Saving keeps its original creation date.`;
+    $("templateStatus").textContent =
+      `Editing “${template.name}”. Saving keeps its original creation date.`;
     $("templateName").focus();
   }
   if (use) {
@@ -2468,7 +3127,8 @@ function syncRunningChip(connected) {
   else if (ready) parts.push(`${ready} awaiting approval`);
   else parts.push("No campaign is sending");
   $("runningChip").textContent = parts[0];
-  $("runningChip").className = `status-chip ${running.length ? "is-live" : drafting ? "is-warn" : ready ? "is-info" : "is-idle"}`;
+  $("runningChip").className =
+    `status-chip ${running.length ? "is-live" : drafting ? "is-warn" : ready ? "is-info" : "is-idle"}`;
   $("outreachBadge").textContent = running.length + drafting;
   $("outreachBadge").classList.toggle(
     "hidden",
@@ -2480,8 +3140,11 @@ function syncAiChip() {
   $("aiStatusChip").textContent = available
     ? `Local AI · ${aiConnection.models?.length || 0} model${aiConnection.models?.length === 1 ? "" : "s"} ready`
     : "Local AI · offline";
-  $("aiStatusChip").className = `status-chip ${available ? "is-ok" : "is-idle"}`;
-  $("headerAi").textContent = available ? "Local AI · ready" : "Local AI · offline";
+  $("aiStatusChip").className =
+    `status-chip ${available ? "is-ok" : "is-idle"}`;
+  $("headerAi").textContent = available
+    ? "Local AI · ready"
+    : "Local AI · offline";
   $("headerAi").className = `header-chip ${available ? "is-ok" : "is-idle"}`;
 }
 
@@ -2505,10 +3168,10 @@ async function loadOutreach() {
     $("zohoDc").value = status.dc || "com";
     if (status.client_saved) {
       $("zohoClientId").placeholder = "Saved securely · enter only to replace";
-      $("zohoClientSecret").placeholder = "Saved securely · enter only to replace";
-      $("zohoConnectForm").querySelector("button[type=submit]").textContent = status.connected
-        ? "Reconnect Zoho"
-        : "Open Zoho approval";
+      $("zohoClientSecret").placeholder =
+        "Saved securely · enter only to replace";
+      $("zohoConnectForm").querySelector("button[type=submit]").textContent =
+        status.connected ? "Reconnect Zoho" : "Open Zoho approval";
       $("zohoClientId").required = false;
       $("zohoClientSecret").required = false;
     } else {
@@ -2570,7 +3233,8 @@ $("zohoConnectForm").addEventListener("submit", async (event) => {
       "zoho-oauth",
       "popup,width=620,height=760",
     );
-    if (!popup) throw Error("Allow popups for this local dashboard, then try again.");
+    if (!popup)
+      throw Error("Allow popups for this local dashboard, then try again.");
     $("zohoConnectStatus").textContent =
       "Complete Zoho approval in the popup. This page will detect the connection.";
     const deadline = Date.now() + 10 * 60 * 1000;
@@ -2580,7 +3244,8 @@ $("zohoConnectForm").addEventListener("submit", async (event) => {
         if (status.connected) {
           clearInterval(watch);
           popup.close();
-          $("zohoConnectStatus").textContent = `Connected as ${status.from_address}.`;
+          $("zohoConnectStatus").textContent =
+            `Connected as ${status.from_address}.`;
           await loadOutreach();
           toast("Zoho Mail is connected.");
         } else if (Date.now() > deadline || popup.closed) clearInterval(watch);
@@ -2613,6 +3278,7 @@ async function init() {
   syncCampaignSource();
   setOutreachTab("campaigns");
   await loadBrowserProfile();
+  await loadMaintenance();
   await updatePlan();
   await loadHistory();
   try {
@@ -2621,7 +3287,9 @@ async function init() {
       $("browser").checked = false;
       const note = $("browser").closest(".check-row")?.querySelector("small");
       if (note && !note.dataset.installerPreference) {
-        note.append(" Disabled during installation; you can enable it for any search.");
+        note.append(
+          " Disabled during installation; you can enable it for any search.",
+        );
         note.dataset.installerPreference = "shown";
       }
     }
@@ -2638,7 +3306,9 @@ async function init() {
   await discoverWorkflowForJob();
   if (workflowId) pollWorkflow(workflowId);
   try {
-    const savedBatch = JSON.parse(localStorage.getItem("leadfinder.aiBatchTask") || "null");
+    const savedBatch = JSON.parse(
+      localStorage.getItem("leadfinder.aiBatchTask") || "null",
+    );
     if (savedBatch?.id) pollAiBatch(savedBatch.id, savedBatch.job_id);
   } catch {
     localStorage.removeItem("leadfinder.aiBatchTask");
@@ -2646,6 +3316,43 @@ async function init() {
   route();
 }
 init();
+
+$("checkUpdates").addEventListener("click", async () => {
+  try {
+    renderMaintenance(await window.leadFinderWindow.checkForUpdates());
+  } catch (err) {
+    renderMaintenance({ status: "error", message: err.message });
+  }
+});
+$("downloadUpdate").addEventListener("click", async () => {
+  try {
+    renderMaintenance(await window.leadFinderWindow.downloadUpdate());
+  } catch (err) {
+    renderMaintenance({ status: "error", message: err.message });
+  }
+});
+$("installUpdate").addEventListener("click", async () => {
+  if (
+    !confirm(
+      "Restart Lead Extractor and install the downloaded update now? Active searches should be allowed to finish first.",
+    )
+  )
+    return;
+  await window.leadFinderWindow.installUpdate();
+});
+$("repairRuntime").addEventListener("click", async () => {
+  if (
+    !confirm(
+      "Repair the local runtime now? The app may be unavailable for several minutes, but saved research and settings will be preserved.",
+    )
+  )
+    return;
+  try {
+    renderMaintenance(await window.leadFinderWindow.repairRuntime());
+  } catch (err) {
+    renderMaintenance({ status: "error", message: err.message });
+  }
+});
 setInterval(async () => {
   if (!jobId || workflowId) return;
   if (await discoverWorkflowForJob()) pollWorkflow(workflowId);

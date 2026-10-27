@@ -1,5 +1,20 @@
 # Changelog
 
+## 2.3.0 — 2026-10-27
+
+### Data quality
+
+- Normalize directory and public-profile titles before identity matching, including location and directory boilerplate removal.
+- Reject probable multi-listing containers with unbounded names or repeated phone patterns.
+- Exclude news, obituary, and general-media domains unless the page carries explicit `LocalBusiness` or `Organization` schema metadata.
+- Run a targeted name/taxonomy/city website waterfall for applicable NPI Registry providers and force a published-contact check on discovered practice sites.
+
+### Desktop maintenance
+
+- Add GitHub release checks, update download progress, restart-to-install, and periodic background checks for installed builds.
+- Add a recoverable local-runtime repair action that preserves saved searches, lead data, browser preferences, and outreach settings.
+- Configure Electron Builder to emit GitHub updater metadata for future releases.
+
 ## 2.2.0 — 2026-10-27
 
 First public Windows release.

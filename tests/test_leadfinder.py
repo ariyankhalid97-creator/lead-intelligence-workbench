@@ -24,6 +24,25 @@ class LeadFinderTests(unittest.TestCase):
         empty = leadfinder.Lead(name="B")
         self.assertGreater(leadfinder.score(full), leadfinder.score(empty))
 
+    def test_directory_title_is_cleaned_before_deduplication(self):
+        lead = leadfinder.Lead(
+            name="Acme Dental in Dallas, TX | Chamber of Commerce",
+            city="Dallas, TX",
+        )
+        self.assertEqual("Acme Dental", lead.name)
+
+    def test_multi_listing_phone_container_is_discarded(self):
+        container = leadfinder.Lead(
+            name="Acme 214-555-0100 Beta 214-555-0101",
+            website="https://directory.test/list",
+        )
+        self.assertEqual([], leadfinder.deduplicate([container]))
+        self.assertIn("multi_listing_phone_container", container.quality_flags)
+
+    def test_unbounded_entity_title_is_discarded(self):
+        container = leadfinder.Lead(name="A" * 81)
+        self.assertEqual([], leadfinder.deduplicate([container]))
+
     def test_csv_export(self):
         with tempfile.TemporaryDirectory() as folder:
             target = Path(folder) / "out.csv"

@@ -1,7 +1,7 @@
 {
   "name": "lead-extractor-desktop",
   "productName": "Lead Extractor",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "description": "Local-first lead research, verification, intelligence, and approval-gated outreach desktop workspace",
   "author": "ariyankhalid97-creator",
   "license": "MIT",
@@ -42,6 +42,13 @@
       "target": "nsis",
       "icon": "build/icon.ico"
     },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "ariyankhalid97-creator",
+        "repo": "lead-intelligence-workbench"
+      }
+    ],
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
@@ -59,5 +66,8 @@
     "electron": "^45.0.0",
     "electron-builder": "^26.0.12",
     "prettier": "^3.9.10"
+  },
+  "dependencies": {
+    "electron-updater": "^6.8.11"
   }
 }

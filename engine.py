@@ -323,8 +323,12 @@ def start(params):
     import intelligence
 
     niche_pack = intelligence.ensure_niche_pack(params["niche"])
-    existing_phrases = [item.strip() for item in params.get("phrases", "").splitlines() if item.strip()]
-    combined_phrases = list(dict.fromkeys([*existing_phrases, *niche_pack.get("synonyms", [])[1:]]))[:10]
+    existing_phrases = [
+        item.strip() for item in params.get("phrases", "").splitlines() if item.strip()
+    ]
+    combined_phrases = list(
+        dict.fromkeys([*existing_phrases, *niche_pack.get("synonyms", [])[1:]])
+    )[:10]
     params["phrases"] = "\n".join(combined_phrases)
     with ACTIVE_LOCK:
         if EVENTS:
@@ -388,10 +392,22 @@ def root_cause_analysis(
         and e.get("message") == "Website page unavailable"
     ]
     website_failure_summary = {
-        "dns_resolution": sum("resolve" in error.casefold() or "dns" in error.casefold() for error in website_errors),
-        "robots_restriction": sum("robots" in error.casefold() for error in website_errors),
-        "http_error": sum(bool(re.search(r"\b(?:HTTP|status)\s*[45]\d\d\b", error, re.I)) and "robots" not in error.casefold() for error in website_errors),
-        "timeout": sum("timed out" in error.casefold() or "timeout" in error.casefold() for error in website_errors),
+        "dns_resolution": sum(
+            "resolve" in error.casefold() or "dns" in error.casefold()
+            for error in website_errors
+        ),
+        "robots_restriction": sum(
+            "robots" in error.casefold() for error in website_errors
+        ),
+        "http_error": sum(
+            bool(re.search(r"\b(?:HTTP|status)\s*[45]\d\d\b", error, re.I))
+            and "robots" not in error.casefold()
+            for error in website_errors
+        ),
+        "timeout": sum(
+            "timed out" in error.casefold() or "timeout" in error.casefold()
+            for error in website_errors
+        ),
         "other": 0,
     }
     classified = sum(website_failure_summary.values())
@@ -405,7 +421,9 @@ def root_cause_analysis(
         for name, details in providers.items()
         if details.get("failures", 0) or details.get("status") == "failed"
     ]
-    map_queries = [q for q in research_plan.get("queries", []) if q["channel"] == "browser"]
+    map_queries = [
+        q for q in research_plan.get("queries", []) if q["channel"] == "browser"
+    ]
     attempted_map_queries = list(
         dict.fromkeys(
             e["details"].get("query")
@@ -438,7 +456,8 @@ def root_cause_analysis(
                     "kind": "maps_stop",
                     "provider": "browser",
                     "impact": f"Maps stopped expanding this query at {stop.get('links_collected', 0)} listing links.",
-                    "evidence": stop.get("explanation") or stop.get("reason", "unknown"),
+                    "evidence": stop.get("explanation")
+                    or stop.get("reason", "unknown"),
                     "query": stop.get("query", ""),
                     "reason": stop.get("reason", "unknown"),
                 }
@@ -538,7 +557,22 @@ def run(job, cancel):
             if provider == "website_fetch" and details.get("url"):
                 conn.execute(
                     "INSERT INTO fetch_diagnostics(job_id,company_id,url,fetched_at,fetch_tier,status_code,redirect_chain,elapsed_ms,render_ms,waf_signature,outcome,details) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
-                    (job["id"], str(details.get("company_id", ""))[:80], str(details.get("url", ""))[:1500], event_time, str(details.get("fetch_tier", "http"))[:40], int(details.get("status_code", 0) or 0), json.dumps(details.get("redirect_chain", []), ensure_ascii=False), int(details.get("elapsed_ms", 0) or 0), int(details.get("render_ms", 0) or 0), str(details.get("waf_signature", ""))[:120], str(details.get("outcome", "unknown"))[:120], json.dumps(details, ensure_ascii=False)),
+                    (
+                        job["id"],
+                        str(details.get("company_id", ""))[:80],
+                        str(details.get("url", ""))[:1500],
+                        event_time,
+                        str(details.get("fetch_tier", "http"))[:40],
+                        int(details.get("status_code", 0) or 0),
+                        json.dumps(
+                            details.get("redirect_chain", []), ensure_ascii=False
+                        ),
+                        int(details.get("elapsed_ms", 0) or 0),
+                        int(details.get("render_ms", 0) or 0),
+                        str(details.get("waf_signature", ""))[:120],
+                        str(details.get("outcome", "unknown"))[:120],
+                        json.dumps(details, ensure_ascii=False),
+                    ),
                 )
         LOG.info(
             json.dumps(
@@ -783,8 +817,15 @@ def run(job, cancel):
                         pool.submit(
                             provider,
                             "npi",
-                            lambda: public_sources.npi_search(
-                                params["niche"], location, per_location_limit, emit
+                            lambda: public_sources.npi_secondary_enrichment(
+                                public_sources.npi_search(
+                                    params["niche"], location, per_location_limit, emit
+                                ),
+                                params["niche"],
+                                location,
+                                per_location_limit,
+                                cancel,
+                                emit,
                             ),
                         )
                     )
@@ -833,7 +874,9 @@ def run(job, cancel):
 
         def process(lead):
             content = ""
-            if params["enrich"] and not cancel.is_set():
+            if (
+                params["enrich"] or lead.source == "npi_registry"
+            ) and not cancel.is_set():
                 lead, content = enrich(
                     lead,
                     client,
