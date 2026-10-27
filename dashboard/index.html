@@ -83,7 +83,7 @@
       <div class="sidebar-bottom">
         <span class="local-dot"></span> Running on your computer
         <p>Your searches and results stay in this workspace.</p>
-        <span class="version">LOCAL EDITION / 2.3</span>
+        <span class="version">LOCAL EDITION / 2.4</span>
       </div>
     </aside>
     <main>
@@ -220,6 +220,22 @@
               placeholder="Dallas, Texas"
             >
 Dallas, Texas</textarea>
+            <div class="two-col phase-two-geography">
+              <div>
+                <label for="country">Country context</label>
+                <select id="country">
+                  <option value="US">United States</option>
+                  <option value="SG">Singapore</option>
+                  <option value="MY">Malaysia</option>
+                  <option value="AU">Australia</option>
+                  <option value="manual">Other / manually entered</option>
+                </select>
+              </div>
+              <p class="fine-print">
+                Country context selects applicable registries. The location box
+                always accepts a manually entered city, region, and country.
+              </p>
+            </div>
             <div class="two-col">
               <div>
                 <label for="limit">Maximum businesses</label
@@ -504,6 +520,27 @@ Dallas, Texas</textarea>
             </p>
           </div>
         </div>
+        <section
+          class="card connections-panel"
+          aria-labelledby="connectionsHeading"
+        >
+          <div class="card-title">
+            <span class="step">02</span>
+            <div>
+              <h2 id="connectionsHeading">Connections &amp; API credentials</h2>
+              <p>
+                Optional paid or account-based providers stay off until you
+                connect, test, and enable them.
+              </p>
+            </div>
+          </div>
+          <div id="connectionCards" class="connection-grid"></div>
+          <p id="connectionStatus" class="fine-print" role="status"></p>
+          <details class="source-catalog-details">
+            <summary><b>Phase 2 country source catalog</b></summary>
+            <div id="sourceCatalog" class="source-grid"></div>
+          </details>
+        </section>
         <div id="sourceCards" class="source-grid"></div>
         <section
           id="maintenanceCard"

@@ -10,6 +10,8 @@ from urllib.parse import quote, urlparse
 from leadfinder import Lead, fetch, normalize_business_name
 from research import add_observation
 
+import connections
+
 
 STATE_CODES = {
     "alabama": "AL",
@@ -364,6 +366,79 @@ def npi_secondary_enrichment(
             retained_without_website=sum(not lead.website for lead in leads),
         )
     return leads
+
+
+def google_places_search(
+    search_plan: dict, location: str, limit: int, emit=None
+) -> list[Lead]:
+    """Use the optional, user-enabled Places API as one bounded provider."""
+    if not connections.secret("google_places"):
+        return []
+    phrases = [
+        phrase
+        for phrase in search_plan.get("phrases", [])
+        if isinstance(phrase, str) and phrase.strip()
+    ][:3]
+    if not phrases:
+        return []
+    per_query = max(1, min(20, (int(limit) + len(phrases) - 1) // len(phrases)))
+    leads = []
+    for phrase in phrases:
+        query = f"{phrase} in {location}"
+        if emit:
+            emit(
+                "google_places",
+                "info",
+                "Google Places query started",
+                query=query,
+                billing_notice="Places API usage may incur charges on the user's Google Cloud account.",
+            )
+        for place in connections.google_places_text(query, per_query):
+            display = place.get("displayName") or {}
+            name = display.get("text", "") if isinstance(display, dict) else ""
+            coordinates = place.get("location") or {}
+            lead = Lead(
+                name=name,
+                category=str(place.get("primaryType") or "").replace("_", " "),
+                address=str(place.get("formattedAddress") or ""),
+                city=location,
+                phone=str(place.get("nationalPhoneNumber") or ""),
+                website=str(place.get("websiteUri") or ""),
+                latitude=str(coordinates.get("latitude") or ""),
+                longitude=str(coordinates.get("longitude") or ""),
+                rating=str(place.get("rating") or ""),
+                reviews=str(place.get("userRatingCount") or ""),
+                source="google_places_api",
+                sources="google_places_api",
+                source_id=str(place.get("id") or ""),
+                source_url=(
+                    "https://www.google.com/maps/search/?api=1&query="
+                    + quote(name or query)
+                    + (
+                        f"&query_place_id={quote(str(place.get('id')))}"
+                        if place.get("id")
+                        else ""
+                    )
+                ),
+                discovery_query=query,
+                discovery_intent="licensed_places_api",
+                search_location=location,
+                source_strength="licensed_api",
+                location_evidence="provider_formatted_address",
+            )
+            add_observation(
+                lead,
+                "licensed_provider_record",
+                "; ".join(
+                    filter(
+                        None, (lead.category, lead.address, lead.phone, lead.website)
+                    )
+                ),
+                lead.source_url,
+                "Google Places API",
+            )
+            leads.append(lead)
+    return leads[: max(1, int(limit))]
 
 
 def wikidata_search(

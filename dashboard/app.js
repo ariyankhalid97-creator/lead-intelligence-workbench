@@ -66,6 +66,89 @@ async function loadMaintenance() {
   renderMaintenance(await desktop.maintenanceStatus());
   desktop.onMaintenance(renderMaintenance);
 }
+let connectionPollTimer = null;
+function connectionBadge(item) {
+  if (item.connected && item.enabled) return "connected · enabled";
+  if (item.connected) return "connected";
+  if (item.configured) return "saved · test needed";
+  return "not connected";
+}
+function connectionCard(item) {
+  const status = connectionBadge(item);
+  if (item.id === "google_sheets") {
+    return `<article class="connection-card ${item.connected ? "is-connected" : ""}" data-provider="${item.id}">
+      <h3>${escapeHtml(item.name)}</h3><span class="badge">${escapeHtml(status)}</span>
+      <p>${escapeHtml(item.description)}</p><small>${escapeHtml(item.auth)}${item.secret_hint ? ` · ${escapeHtml(item.secret_hint)}` : ""}</small>
+      <form data-connection-form="google_sheets">
+        <label>Desktop OAuth client ID<input name="client_id" type="password" autocomplete="off" placeholder="Paste Google OAuth client ID" required></label>
+        <label>Desktop OAuth client secret<input name="client_secret" type="password" autocomplete="off" placeholder="Paste Google OAuth client secret" required></label>
+        <div class="button-row"><button class="secondary" type="submit">Save OAuth client</button>
+        <button class="primary" type="button" data-connection-action="google-connect" ${item.configured ? "" : "disabled"}>Connect Google</button>
+        <button class="secondary" type="button" data-connection-action="sheet-sync" ${item.connected ? "" : "disabled"}>Sync research library</button>
+        <button class="ghost" type="button" data-connection-action="disconnect">Disconnect</button></div>
+      </form>
+      <p class="fine-print">Enable the Google Sheets API, then use a Google Cloud <b>Desktop app</b> OAuth client. Access is limited to files this app creates or opens. ${item.spreadsheet_id ? "A research spreadsheet is linked." : ""}</p>
+    </article>`;
+  }
+  const automaticNote = item.automatic
+    ? "Can join the All sources waterfall after verification and explicit enabling."
+    : "Connection is saved now; provider-specific data calls remain explicit while Phase 2 adapters are added.";
+  return `<article class="connection-card ${item.connected ? "is-connected" : ""}" data-provider="${item.id}">
+    <h3>${escapeHtml(item.name)}</h3><span class="badge">${escapeHtml(status)}</span>
+    <p>${escapeHtml(item.description)}</p><small>${escapeHtml(item.auth)}${item.secret_hint ? ` · ${escapeHtml(item.secret_hint)}` : ""}</small>
+    <form data-connection-form="${item.id}"><label>API key or token<input name="api_key" type="password" autocomplete="off" placeholder="Paste credential" required></label>
+      <div class="button-row"><button class="secondary" type="submit">Save credential</button><button class="secondary" type="button" data-connection-action="test" ${item.configured ? "" : "disabled"}>Test connection</button><button class="ghost" type="button" data-connection-action="disconnect">Disconnect</button></div>
+      <label class="provider-enable"><input type="checkbox" data-connection-action="enabled" ${item.enabled ? "checked" : ""} ${item.connected && item.automatic ? "" : "disabled"}>Use in automatic waterfall</label>
+    </form><p class="fine-print">${escapeHtml(automaticNote)}${item.message ? ` ${escapeHtml(item.message)}` : ""}</p>
+  </article>`;
+}
+async function loadConnections() {
+  if (!$("connectionCards")) return;
+  try {
+    const [data, catalog] = await Promise.all([
+      api("/api/connections"),
+      api("/api/connections/catalog"),
+    ]);
+    $("connectionCards").innerHTML = data.providers
+      .map(connectionCard)
+      .join("");
+    $("sourceCatalog").innerHTML = catalog.sources
+      .map(
+        (item) =>
+          `<div class="source-card"><h3>${escapeHtml(item.name)}</h3><span class="badge">${escapeHtml(item.status)}</span><p><b>${escapeHtml(item.country)}</b> · ${escapeHtml(item.access_class)}</p><p>${escapeHtml(item.connector_type.replaceAll("_", " "))} · ${escapeHtml(item.niches)}</p></div>`,
+      )
+      .join("");
+    $("connectionStatus").textContent =
+      `Credentials are stored in ${data.secrets_storage}; secret values are never returned to this page.`;
+  } catch (err) {
+    $("connectionStatus").textContent =
+      `Connections unavailable: ${err.message}`;
+  }
+}
+async function connectionPost(path, body) {
+  return api(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+function pollGoogleConnection(popup) {
+  clearInterval(connectionPollTimer);
+  let attempts = 0;
+  connectionPollTimer = setInterval(async () => {
+    attempts += 1;
+    try {
+      const data = await api("/api/connections");
+      const google = data.providers.find((item) => item.id === "google_sheets");
+      if (google?.connected || popup?.closed || attempts > 120) {
+        clearInterval(connectionPollTimer);
+        connectionPollTimer = null;
+        await loadConnections();
+        if (google?.connected) toast("Google Sheets connected.");
+      }
+    } catch {}
+  }, 1000);
+}
 const escapeHtml = (value) =>
   String(value ?? "").replace(
     /[&<>"']/g,
@@ -621,6 +704,7 @@ function route() {
   if (view === "history") loadHistory();
   if (view === "library") loadLibrary();
   if (view === "outreach") loadOutreach();
+  if (view === "sources") loadConnections();
   if (hash === "results")
     $("resultSection").scrollIntoView({ behavior: "smooth" });
   if (hash === "diagnostics") {
@@ -645,6 +729,7 @@ async function updatePlan() {
     const query = new URLSearchParams({
       niche: $("niche").value,
       location: $("location").value,
+      country: $("country").value,
       source: $("source").value,
       target: $("target").value,
       coverage: $("coverage").value,
@@ -679,6 +764,7 @@ let debounce;
 for (const id of [
   "niche",
   "location",
+  "country",
   "target",
   "coverage",
   "depth",
@@ -693,6 +779,7 @@ for (const id of [
       ? "input"
       : "change",
     () => {
+      if (id === "country") syncCountryCoverage();
       if (id === "coverage")
         $("queryBudget").value =
           $("coverage").value === "usa"
@@ -704,6 +791,23 @@ for (const id of [
       debounce = setTimeout(updatePlan, 350);
     },
   );
+}
+function syncCountryCoverage() {
+  const isUnitedStates = $("country").value === "US";
+  for (const value of ["states", "usa"]) {
+    const option = $("coverage").querySelector(`option[value="${value}"]`);
+    option.disabled = !isUnitedStates;
+  }
+  if (!isUnitedStates && ["states", "usa"].includes($("coverage").value))
+    $("coverage").value = "exact";
+  const examples = {
+    US: "Dallas, Texas",
+    SG: "Singapore",
+    MY: "Kuala Lumpur, Malaysia",
+    AU: "Sydney, New South Wales, Australia",
+    manual: "City, region, country",
+  };
+  $("location").placeholder = examples[$("country").value] || examples.manual;
 }
 function renderStrategy(s) {
   if (!s) return;
@@ -761,6 +865,7 @@ $("searchForm").addEventListener("submit", async (event) => {
       body: JSON.stringify({
         niche: $("niche").value,
         location: $("location").value,
+        country: $("country").value,
         limit: Number($("limit").value),
         source: $("source").value,
         browser: $("browser").checked,
@@ -3277,8 +3382,10 @@ async function init() {
   loadAiStatus();
   syncCampaignSource();
   setOutreachTab("campaigns");
+  syncCountryCoverage();
   await loadBrowserProfile();
   await loadMaintenance();
+  await loadConnections();
   await updatePlan();
   await loadHistory();
   try {
@@ -3316,6 +3423,93 @@ async function init() {
   route();
 }
 init();
+
+$("connectionCards").addEventListener("submit", async (event) => {
+  const form = event.target.closest("[data-connection-form]");
+  if (!form) return;
+  event.preventDefault();
+  const provider = form.dataset.connectionForm;
+  const values = Object.fromEntries(new FormData(form));
+  try {
+    await connectionPost("/api/connections/save", { provider, ...values });
+    await loadConnections();
+    toast(
+      `${provider === "google_sheets" ? "Google OAuth client" : "Provider credential"} saved securely.`,
+    );
+  } catch (err) {
+    $("connectionStatus").textContent = err.message;
+  }
+});
+$("connectionCards").addEventListener("click", async (event) => {
+  const button = event.target.closest("[data-connection-action]");
+  if (!button || button.matches('input[type="checkbox"]')) return;
+  const card = button.closest("[data-provider]");
+  const provider = card?.dataset.provider;
+  const action = button.dataset.connectionAction;
+  try {
+    if (action === "google-connect") {
+      const popup = window.open(
+        "/api/connections/google/connect",
+        "leadfinder-google-oauth",
+        "popup,width=620,height=760",
+      );
+      pollGoogleConnection(popup);
+      $("connectionStatus").textContent =
+        "Complete Google approval in the popup. This page will detect the connection.";
+      return;
+    }
+    if (action === "test") {
+      if (
+        provider === "google_places" &&
+        !confirm(
+          "Testing Google Places performs one Text Search request and may use billable quota. Continue?",
+        )
+      )
+        return;
+      button.disabled = true;
+      $("connectionStatus").textContent = `Testing ${provider}…`;
+      await connectionPost("/api/connections/test", { provider });
+      toast("Connection verified.");
+    } else if (action === "sheet-sync") {
+      button.disabled = true;
+      $("connectionStatus").textContent =
+        "Synchronizing the organized research library…";
+      const result = await connectionPost("/api/connections/google/sync", {});
+      await loadConnections();
+      $("connectionStatus").innerHTML =
+        `${result.rows} organized leads synchronized. ${link(result.url, "Open Google Sheet ↗")}`;
+      toast("Research library synchronized to Google Sheets.");
+      return;
+    } else if (action === "disconnect") {
+      if (
+        !confirm(`Disconnect ${provider}? Saved research will not be deleted.`)
+      )
+        return;
+      await connectionPost("/api/connections/disconnect", { provider });
+      toast("Connection removed from Windows Credential Manager.");
+    }
+    await loadConnections();
+  } catch (err) {
+    $("connectionStatus").textContent = err.message;
+    button.disabled = false;
+  }
+});
+$("connectionCards").addEventListener("change", async (event) => {
+  const input = event.target.closest('[data-connection-action="enabled"]');
+  if (!input) return;
+  const provider = input.closest("[data-provider]")?.dataset.provider;
+  try {
+    await connectionPost("/api/connections/enabled", {
+      provider,
+      enabled: input.checked,
+    });
+    await loadConnections();
+    toast(input.checked ? "Provider enabled." : "Provider disabled.");
+  } catch (err) {
+    input.checked = !input.checked;
+    $("connectionStatus").textContent = err.message;
+  }
+});
 
 $("checkUpdates").addEventListener("click", async () => {
   try {

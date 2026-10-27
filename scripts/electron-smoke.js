@@ -12,6 +12,7 @@ const path = require("path");
   const app = await electron.launch({
     args: [root, `--user-data-dir=${testProfile}`],
     cwd: root,
+    env: { ...process.env, LEAD_EXTRACTOR_PORT: "18788" },
   });
   try {
     const page = await app.firstWindow();
@@ -40,6 +41,18 @@ const path = require("path");
     assert.strictEqual(await page.locator("#windowBack").isVisible(), true);
     assert.strictEqual(await page.locator("#windowClose").isVisible(), true);
     assert.strictEqual(await page.locator("#maintenanceCard").count(), 1);
+    await page.waitForFunction(
+      () =>
+        document.querySelectorAll("#connectionCards .connection-card")
+          .length === 5,
+    );
+    assert.strictEqual(
+      await page
+        .locator("#connectionCards")
+        .textContent()
+        .then((text) => text.includes("Google Sheets")),
+      true,
+    );
     assert.strictEqual(
       await page.evaluate(
         () => typeof window.leadFinderWindow?.maintenanceStatus === "function",

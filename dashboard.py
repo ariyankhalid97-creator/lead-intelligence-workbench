@@ -21,6 +21,7 @@ import ai_tasks
 import verification
 import outreach
 import browser_session
+import connections
 import intelligence
 import sequence_engine
 import workflow
@@ -80,6 +81,27 @@ class Handler(BaseHTTPRequestHandler):
             return
         parsed = urlparse(self.path)
         path = parsed.path
+        query_values = parse_qs(parsed.query)
+        if path == "/" and (
+            query_values.get("code")
+            or query_values.get("state")
+            or query_values.get("error")
+        ):
+            callback = f"http://127.0.0.1:{self.server.server_port}"
+            try:
+                if query_values.get("error"):
+                    raise ValueError("Google access was not approved")
+                connections.google_callback(
+                    query_values.get("code", [""])[0],
+                    query_values.get("state", [""])[0],
+                    callback,
+                )
+                body = b"<!doctype html><meta charset='utf-8'><title>Google connected</title><h1>Google Sheets connected</h1><p>Return to Lead Extractor. This window can be closed.</p>"
+                self.send(body, mime="text/html")
+            except Exception as exc:
+                body = f"<!doctype html><meta charset='utf-8'><title>Google connection failed</title><h1>Google connection failed</h1><p>{html.escape(str(exc))}</p>".encode()
+                self.send(body, 400, "text/html")
+            return
         if path == "/api/health":
             chrome_preference = (
                 os.getenv("LEAD_EXTRACTOR_CHROME_INTEGRATION", "1") != "0"
@@ -98,6 +120,27 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path == "/api/browser/status":
             self.send(browser_session.status())
+            return
+        if path == "/api/connections":
+            self.send(connections.statuses())
+            return
+        if path == "/api/connections/catalog":
+            with engine.connection() as conn:
+                rows = conn.execute(
+                    "SELECT id,name,country,connector_type,niches,access_class,enabled,status,last_checked FROM source_catalog ORDER BY country,name"
+                ).fetchall()
+            fields = (
+                "id",
+                "name",
+                "country",
+                "connector_type",
+                "niches",
+                "access_class",
+                "enabled",
+                "status",
+                "last_checked",
+            )
+            self.send({"sources": [dict(zip(fields, row)) for row in rows]})
             return
         if path == "/api/outreach/status":
             self.send(outreach.provider_status())
@@ -136,6 +179,17 @@ class Handler(BaseHTTPRequestHandler):
             )
             try:
                 destination = outreach.oauth_authorize_url(callback)
+                self.send_response(302)
+                self.send_header("Location", destination)
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+            except ValueError as exc:
+                self.send({"error": str(exc)}, 400)
+            return
+        if path == "/api/connections/google/connect":
+            callback = f"http://127.0.0.1:{self.server.server_port}"
+            try:
+                destination = connections.google_authorize_url(callback)
                 self.send_response(302)
                 self.send_header("Location", destination)
                 self.send_header("Cache-Control", "no-store")
@@ -201,6 +255,7 @@ class Handler(BaseHTTPRequestHandler):
                     for key, default in [
                         ("niche", niche),
                         ("location", "Dallas, Texas"),
+                        ("country", "US"),
                         ("source", "hybrid"),
                         ("target", "both"),
                         ("coverage", "exact"),
@@ -278,6 +333,28 @@ class Handler(BaseHTTPRequestHandler):
                 return
             if self.path == "/api/browser/open":
                 self.send(browser_session.open_service(params.get("service", "all")))
+                return
+            if self.path == "/api/connections/save":
+                self.send(
+                    connections.save(str(params.get("provider", "")), params), 201
+                )
+                return
+            if self.path == "/api/connections/test":
+                self.send(connections.test(str(params.get("provider", ""))))
+                return
+            if self.path == "/api/connections/enabled":
+                self.send(
+                    connections.set_enabled(
+                        str(params.get("provider", "")),
+                        params.get("enabled") is True,
+                    )
+                )
+                return
+            if self.path == "/api/connections/disconnect":
+                self.send(connections.disconnect(str(params.get("provider", ""))))
+                return
+            if self.path == "/api/connections/google/sync":
+                self.send(connections.sync_sheet(reference_library.load()))
                 return
             if self.path == "/api/browser/open-url":
                 self.send(

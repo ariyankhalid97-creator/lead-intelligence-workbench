@@ -1,5 +1,15 @@
 # Phase 2: country directories, geography, Sheets and LinkedIn-assisted research
 
+## Implemented foundation in 2.4
+
+- secure optional-provider vault and connection health checks;
+- Google Sheets desktop OAuth and organized-library synchronization;
+- explicitly enabled Google Places provider in the all-sources waterfall;
+- persistent source catalog seeded for US, Singapore, Malaysia and Australia;
+- country context selector with unrestricted manual location fallback.
+
+The remaining country registry adapters, exact cross-directory comparison, and approved LinkedIn automation are staged below.
+
 This phase should extend the evidence waterfall without turning every directory page into a trusted lead. Google Maps remains a discovery seed. Registry and directory results are comparison evidence until an exact domain, phone, registration identifier, or name-and-address match connects them to the same entity.
 
 ## 1. Source registry and saved directory memory

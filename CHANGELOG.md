@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.4.0 — 2026-10-27
+
+### Phase 2 foundation
+
+- Add an in-app Connections panel backed by Windows Credential Manager for Google Sheets, Google Places, Apollo, Apify, and Outscraper.
+- Add Google desktop OAuth with the narrow `drive.file` scope and one-click synchronization of the organized research library to an app-created spreadsheet.
+- Add verified, explicitly enabled Google Places Text Search to the normal all-sources waterfall, including billing diagnostics and bounded queries.
+- Add connection health checks for Apollo, Apify, Outscraper, and Google Places without returning secret values to the browser or diagnostics.
+- Add a persistent country source catalog seeded for the United States, Singapore, Malaysia, and Australia.
+- Add country context to search planning while retaining manual city/region/country entry for unsupported countries.
+
 ## 2.3.0 — 2026-10-27
 
 ### Data quality

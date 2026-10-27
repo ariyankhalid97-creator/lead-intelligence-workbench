@@ -36,6 +36,8 @@ The app helps you move through one continuous process:
 - **Safe outreach controls:** reusable templates, per-lead AI drafts, suppression checks, daily limits, randomized respectful pacing, and explicit approval before Zoho sends.
 - **Local desktop experience:** borderless, resizable Electron interface with built-in back, forward, refresh, minimize, maximize, and close controls.
 - **GitHub updates and repair:** installed builds can check the official release channel, download a future update, and rebuild the local Python runtime without deleting saved research.
+- **Optional account connections:** Google Sheets OAuth, Google Places, Apollo, Apify, and Outscraper credentials are managed from one screen and stored in Windows Credential Manager. Paid providers remain disabled until tested and explicitly enabled.
+- **Country-aware foundation:** searches can identify a United States, Singapore, Malaysia, Australia, or manual country context while preserving the original location text.
 
 ## Source waterfall
 
@@ -110,6 +112,10 @@ npm run build:windows
 The signed-or-unsigned NSIS installer is written to `release/`. Public distribution should use code signing; an unsigned local build may trigger Windows SmartScreen.
 
 Future installed releases use the repository's GitHub release feed. Publish the generated installer and `latest.yml` together; the desktop app will never download an update from an arbitrary URL.
+
+### Optional connections
+
+Open **Data sources → Connections & API credentials**. Google Sheets uses a Google Cloud Desktop OAuth client and requests only `drive.file`. Apollo personal accounts use an API key; Apollo partner OAuth requires separate partner approval. Apify uses a bearer token, while Outscraper and Google Places use API keys. A credential is never included in lead exports, diagnostics, or browser responses.
 
 ## How the research engine reasons
 

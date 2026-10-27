@@ -9,7 +9,14 @@ app.setName("Lead Extractor");
 const ROOT = app.isPackaged
   ? path.join(process.resourcesPath, "backend")
   : path.resolve(__dirname, "..");
-const DASHBOARD_URL = "http://127.0.0.1:8788/";
+const configuredPort = Number(process.env.LEAD_EXTRACTOR_PORT || 8788);
+const DASHBOARD_PORT =
+  Number.isInteger(configuredPort) &&
+  configuredPort >= 1024 &&
+  configuredPort <= 65535
+    ? configuredPort
+    : 8788;
+const DASHBOARD_URL = `http://127.0.0.1:${DASHBOARD_PORT}/`;
 let mainWindow = null;
 let backend = null;
 let saveTimer = null;
@@ -283,17 +290,21 @@ async function ensureBackend() {
   if (await dashboardReady()) return;
   const python = await ensurePythonRuntime();
   const preferences = installerPreferences();
-  backend = spawn(python, ["dashboard.py", "--port", "8788", "--no-browser"], {
-    cwd: ROOT,
-    windowsHide: true,
-    stdio: "ignore",
-    env: {
-      ...process.env,
-      LEAD_EXTRACTOR_HOME: dataRoot(),
-      LEAD_EXTRACTOR_CHROME_INTEGRATION:
-        preferences.chromeIntegration === false ? "0" : "1",
+  backend = spawn(
+    python,
+    ["dashboard.py", "--port", String(DASHBOARD_PORT), "--no-browser"],
+    {
+      cwd: ROOT,
+      windowsHide: true,
+      stdio: "ignore",
+      env: {
+        ...process.env,
+        LEAD_EXTRACTOR_HOME: dataRoot(),
+        LEAD_EXTRACTOR_CHROME_INTEGRATION:
+          preferences.chromeIntegration === false ? "0" : "1",
+      },
     },
-  });
+  );
   const deadline = Date.now() + 15000;
   while (Date.now() < deadline) {
     if (await dashboardReady()) return;

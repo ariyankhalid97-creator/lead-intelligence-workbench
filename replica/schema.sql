@@ -310,3 +310,17 @@ CREATE TABLE IF NOT EXISTS outreach_reply_events (
   created_at TEXT NOT NULL,
   payload TEXT NOT NULL DEFAULT '{}'
 );
+
+CREATE TABLE IF NOT EXISTS source_catalog (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  country TEXT NOT NULL,
+  connector_type TEXT NOT NULL,
+  niches TEXT NOT NULL DEFAULT 'general',
+  access_class TEXT NOT NULL,
+  enabled INTEGER NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'planned',
+  parser_version TEXT NOT NULL DEFAULT '1',
+  last_checked TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_source_catalog_country ON source_catalog(country,status);

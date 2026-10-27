@@ -19,6 +19,7 @@ from dataclasses import asdict
 from pathlib import Path
 
 import leadfinder as lf
+import connections
 import public_sources
 import reference_library
 from contacts import WebClient, enrich, now, public_url
@@ -59,6 +60,7 @@ def init(recover=True):
         conn.executescript(
             (SOURCE_ROOT / "replica" / "schema.sql").read_text(encoding="utf-8")
         )
+        connections.init_source_catalog(conn)
         for job_id, payload in (
             conn.execute(
                 "SELECT id,payload FROM jobs WHERE status IN ('queued','running','waiting')"
@@ -106,6 +108,9 @@ def validate(params):
     source = params.get("source", "hybrid")
     if source not in ("hybrid", "osm", "google", "browser", "web", "websites"):
         raise ValueError("Choose a supported source")
+    country = str(params.get("country", "US")).strip()
+    if country not in {"US", "SG", "MY", "AU", "manual"}:
+        raise ValueError("Choose a supported country context or manual location")
     for key in ("enrich", "browser", "research_platforms", "prefer_independent"):
         if key in params and not isinstance(params[key], bool):
             raise ValueError(f"{key} must be true or false")
@@ -133,6 +138,10 @@ def validate(params):
         if value not in options:
             raise ValueError(f"Choose a valid {key}")
         chosen[key] = value
+    if country != "US" and chosen["coverage"] != "exact":
+        raise ValueError(
+            "Metro, state-sample and all-US coverage currently require United States. Use Entered locations for this country."
+        )
     research_profile = params.get("research_profile", "general")
     if research_profile not in ("general", "hood_automation"):
         raise ValueError("Choose a valid research profile")
@@ -165,6 +174,7 @@ def validate(params):
         "locations": locations,
         "limit": limit,
         "source": source,
+        "country": country,
         "enrich": params.get("enrich", True),
         "browser": params.get("browser", True),
         "urls": urls,
@@ -245,7 +255,7 @@ def catalog():
         Path("C:/Program Files/Google/Chrome/Application/chrome.exe").exists()
         or Path("C:/Program Files (x86)/Google/Chrome/Application/chrome.exe").exists()
     )
-    return [
+    sources = [
         {
             "id": "browser",
             "name": "Google Maps · Chrome",
@@ -306,14 +316,29 @@ def catalog():
             "cost": "No platform login or paid reveal",
             "description": "Searches public Yelp, Yellow Pages, Manta, Chamber, BBB, MapQuest, Alignable and niche profile URLs, then verifies claims elsewhere.",
         },
-        {
-            "id": "licensed",
-            "name": "Apollo / Places / Apify / Outscraper",
-            "state": "not connected",
-            "cost": "Account/key or licensed data",
-            "description": "Researched in the source report. No paid calls are made; these are not installed providers.",
-        },
     ]
+    for item in connections.statuses()["providers"]:
+        if item["id"] == "google_sheets":
+            continue
+        state = (
+            "enabled"
+            if item["enabled"] and item["connected"]
+            else "connected · disabled"
+            if item["connected"]
+            else "credential saved · test needed"
+            if item["configured"]
+            else "optional · not connected"
+        )
+        sources.append(
+            {
+                "id": item["id"],
+                "name": item["name"],
+                "state": state,
+                "cost": item["auth"],
+                "description": item["description"],
+            }
+        )
+    return sources
 
 
 def start(params):
@@ -653,6 +678,7 @@ def run(job, cancel):
                 "local_api": "Local Maps API",
                 "npi": "US NPI Registry",
                 "wikidata": "Wikidata",
+                "google_places": "Google Places API",
             }.get(name, name)
             continuation = " Other configured providers continue independently."
             job["warnings"].append(
@@ -778,7 +804,7 @@ def run(job, cancel):
                 ],
             }
             tasks = []
-            with ThreadPoolExecutor(max_workers=6) as pool:
+            with ThreadPoolExecutor(max_workers=7) as pool:
                 if source in ("osm", "hybrid"):
                     tasks.append(
                         pool.submit(
@@ -808,6 +834,16 @@ def run(job, cancel):
                             provider,
                             "wikidata",
                             lambda: public_sources.wikidata_search(
+                                local_plan, location, per_location_limit, emit
+                            ),
+                        )
+                    )
+                if source == "hybrid" and connections.secret("google_places"):
+                    tasks.append(
+                        pool.submit(
+                            provider,
+                            "google_places",
+                            lambda: public_sources.google_places_search(
                                 local_plan, location, per_location_limit, emit
                             ),
                         )
