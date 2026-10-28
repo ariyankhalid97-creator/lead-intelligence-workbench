@@ -37,6 +37,7 @@ SOURCE_ROOT = Path(__file__).resolve().parent
 ROOT = Path(os.environ.get("LEAD_EXTRACTOR_HOME", SOURCE_ROOT)).expanduser().resolve()
 DB = ROOT / "data" / "workbench.db"
 EVENTS: dict[str, threading.Event] = {}
+PAUSES: dict[str, threading.Event] = {}
 ACTIVE_LOCK = threading.Lock()
 STORAGE_LOCK = threading.Lock()
 LOG = logging.getLogger("leadfinder")
@@ -72,10 +73,27 @@ def init(recover=True):
             job.update(
                 status="interrupted",
                 message="The app restarted before this run finished. Collected leads are retained.",
+                interruption={
+                    "at": now(),
+                    "reason": "application_restart",
+                    "previous_status": job.get("status", "unknown"),
+                    "resumable": True,
+                },
             )
             conn.execute(
                 "UPDATE jobs SET status=?,payload=?,updated_at=? WHERE id=?",
                 ("interrupted", json.dumps(job), now(), job_id),
+            )
+            conn.execute(
+                "INSERT INTO events(job_id,created_at,provider,level,message,details) VALUES(?,?,?,?,?,?)",
+                (
+                    job_id,
+                    now(),
+                    "system",
+                    "warning",
+                    "Search interrupted by application restart",
+                    json.dumps(job["interruption"], ensure_ascii=False),
+                ),
             )
     (ROOT / "logs").mkdir(exist_ok=True)
     if not LOG.handlers:
@@ -111,7 +129,13 @@ def validate(params):
     country = str(params.get("country", "US")).strip()
     if country not in {"US", "SG", "MY", "AU", "manual"}:
         raise ValueError("Choose a supported country context or manual location")
-    for key in ("enrich", "browser", "research_platforms", "prefer_independent"):
+    for key in (
+        "enrich",
+        "browser",
+        "research_platforms",
+        "prefer_independent",
+        "live_sheet_sync",
+    ):
         if key in params and not isinstance(params[key], bool):
             raise ValueError(f"{key} must be true or false")
     urls = params.get("urls", "")
@@ -151,6 +175,10 @@ def validate(params):
         raise ValueError(
             "The hood-report profile is for kitchen hood/exhaust services. Choose General research for other niches."
         )
+    offer_title = str(params.get("offer_title", "")).strip()
+    offer_segment_label = str(params.get("offer_segment_label", "")).strip()
+    if len(offer_title) > 120 or len(offer_segment_label) > 120:
+        raise ValueError("Offer and use-case titles must be 120 characters or less")
     reference_ids = params.get("reference_ids", [])
     if (
         not isinstance(reference_ids, list)
@@ -184,11 +212,22 @@ def validate(params):
         "research_platforms": params.get("research_platforms", True),
         "prefer_independent": params.get("prefer_independent", True),
         "research_profile": research_profile,
+        "offer_title": offer_title,
+        "offer_segment_label": offer_segment_label,
+        "live_sheet_sync": params.get("live_sheet_sync", False),
         "reference_ids": reference_ids,
     }
 
 
 def save(job):
+    # The payload carries the precise UI state. The original database schema
+    # has a deliberately small status constraint, so durable pause states use
+    # its existing `waiting` storage state and remain `paused` in the payload.
+    stored_status = (
+        "waiting"
+        if job.get("status") in {"pause_requested", "paused"}
+        else job["status"]
+    )
     with connection() as conn:
         conn.execute(
             "INSERT INTO jobs(id,created_at,updated_at,status,payload) VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET updated_at=excluded.updated_at,status=excluded.status,payload=excluded.payload",
@@ -196,7 +235,7 @@ def save(job):
                 job["id"],
                 job["created_at"],
                 now(),
-                job["status"],
+                stored_status,
                 json.dumps(job, ensure_ascii=False),
             ),
         )
@@ -286,7 +325,14 @@ def catalog():
             "name": "Business websites",
             "state": "ready",
             "cost": "Free",
-            "description": "Paste URLs or enrich discovered businesses using structured data, contact pages and public links.",
+            "description": "Paste URLs or enrich discovered businesses using structured data, contact pages, public links and compact boilerplate-reduced evidence.",
+        },
+        {
+            "id": "local_extraction",
+            "name": "Local extraction waterfall",
+            "state": "built in",
+            "cost": "Free · no API key",
+            "description": "Robots-aware HTTP first, JavaScript rendering only when needed, then compact fit-Markdown and typed lead validation. Security challenges pause for manual review.",
         },
         {
             "id": "google",
@@ -308,6 +354,13 @@ def catalog():
             "state": "available",
             "cost": "Free public API",
             "description": "Best-effort structured discovery of notable organizations; local-business coverage varies.",
+        },
+        {
+            "id": "acra",
+            "name": "Singapore ACRA Registry",
+            "state": "automatic for Singapore searches",
+            "cost": "Free official open dataset",
+            "description": "Verifies registered Singapore entities and UEN status. Registry presence is not treated as buyer intent.",
         },
         {
             "id": "directories",
@@ -368,7 +421,9 @@ def start(params):
             )
         job_id = uuid.uuid4().hex
         cancel = threading.Event()
+        pause = threading.Event()
         EVENTS[job_id] = cancel
+        PAUSES[job_id] = pause
     job = {
         "id": job_id,
         "created_at": now(),
@@ -384,10 +439,12 @@ def start(params):
         "providers": {},
         "stats": {},
         "elapsed": 0,
+        "resume_checkpoint": {"completed_locations": []},
+        "resume_count": 0,
     }
     job["strategy"] = strategy(job["plan"], params)
     save(job)
-    threading.Thread(target=run, args=(job, cancel), daemon=True).start()
+    threading.Thread(target=run, args=(job, cancel, pause), daemon=True).start()
     return job_id
 
 
@@ -397,6 +454,55 @@ def cancel_job(job_id):
         if event:
             event.set()
     return bool(event)
+
+
+def pause_job(job_id):
+    with ACTIVE_LOCK:
+        pause = PAUSES.get(job_id)
+        if pause:
+            pause.set()
+    if not pause:
+        return False
+    job = get_job(job_id, events=False)
+    if job:
+        job.update(
+            status="pause_requested",
+            message="Pause requested. Finishing the current provider request safely.",
+            pause={"requested_at": now(), "resumable": True},
+        )
+        save(job)
+    return True
+
+
+def resume_job(job_id):
+    with ACTIVE_LOCK:
+        pause = PAUSES.get(job_id)
+        if pause:
+            pause.clear()
+            job = get_job(job_id, events=False)
+            if job:
+                job.update(status="running", message="Continuing saved search")
+                job.pop("pause", None)
+                save(job)
+            return True
+        if EVENTS:
+            raise ValueError("Another search is already active")
+        job = get_job(job_id, events=False)
+        if not job or job.get("status") not in {"interrupted", "failed", "cancelled"}:
+            raise ValueError("This search is not paused or resumable")
+        cancel = threading.Event()
+        pause = threading.Event()
+        EVENTS[job_id] = cancel
+        PAUSES[job_id] = pause
+    job.update(
+        status="queued",
+        message="Resuming from saved search checkpoints",
+        progress=max(1, min(int(job.get("progress", 1) or 1), 95)),
+        resume_count=int(job.get("resume_count", 0) or 0) + 1,
+    )
+    save(job)
+    threading.Thread(target=run, args=(job, cancel, pause, True), daemon=True).start()
+    return True
 
 
 def root_cause_analysis(
@@ -545,22 +651,58 @@ def root_cause_analysis(
     }
 
 
-def run(job, cancel):
+def run(job, cancel, pause=None, resume=False):
     import intelligence
 
+    pause = pause or threading.Event()
     started = time.monotonic()
+    elapsed_base = float(job.get("elapsed", 0) or 0) if resume else 0.0
     lock = threading.RLock()
     params = job["params"]
     search_plan = job["plan"]
     research_plan = job.setdefault("strategy", strategy(search_plan, params))
-    leads = []
+    lead_fields = set(asdict(lf.Lead()))
+    leads = [
+        lf.Lead(**{key: value for key, value in row.items() if key in lead_fields})
+        for row in job.get("rows", [])
+        if resume and isinstance(row, dict)
+    ]
     run_events = []
 
     def persist(**changes):
         with lock:
             job.update(changes)
-            job["elapsed"] = round(time.monotonic() - started, 1)
+            job["elapsed"] = round(elapsed_base + time.monotonic() - started, 1)
             save(job)
+
+    def wait_if_paused(stage="search"):
+        announced = False
+        while pause.is_set() and not cancel.is_set():
+            if not announced:
+                persist(
+                    status="paused",
+                    message=f"Paused safely during {stage}. Continue when ready.",
+                    pause={
+                        **(job.get("pause") or {}),
+                        "paused_at": now(),
+                        "stage": stage,
+                        "resumable": True,
+                    },
+                )
+                emit(
+                    "system",
+                    "info",
+                    "Search paused at safe checkpoint",
+                    stage=stage,
+                    collected=len(leads),
+                )
+                announced = True
+            cancel.wait(0.35)
+        if announced and not cancel.is_set():
+            job.pop("pause", None)
+            persist(status="running", message=f"Continuing {stage}")
+            emit("system", "info", "Search continued from safe checkpoint", stage=stage)
+        return not cancel.is_set()
 
     def emit(provider, level, message, **details):
         event_time = now()
@@ -628,7 +770,7 @@ def run(job, cancel):
                 rows=[asdict(x) for x in merged],
                 count=len(merged),
                 message=f"{len(merged)} businesses collected",
-                status="running",
+                status="paused" if pause.is_set() else "running",
             )
 
     def provider(name, fn):
@@ -694,6 +836,7 @@ def run(job, cancel):
             emit(name, "error", "Provider failed", error=str(exc)[:400])
 
     try:
+        wait_if_paused("search startup")
         persist(status="running", message="Searching selected sources", progress=8)
         emit(
             "planner",
@@ -723,6 +866,8 @@ def run(job, cancel):
             budget=research_plan["query_budget"],
         )
         for query in research_plan["queries"]:
+            if not wait_if_paused("platform research"):
+                break
             if query["channel"] == "research":
                 persist(message="Researching niche-specific platforms", progress=5)
                 research_plan["discovered_sources"] = discover_platforms(
@@ -793,8 +938,23 @@ def run(job, cancel):
                 * 2,
             ),
         )
+        completed_locations = set(
+            job.setdefault("resume_checkpoint", {}).setdefault(
+                "completed_locations", []
+            )
+        )
         for location in execute_locations:
             if cancel.is_set():
+                break
+            if resume and location in completed_locations:
+                emit(
+                    "system",
+                    "info",
+                    "Completed location reused from saved checkpoint",
+                    location=location,
+                )
+                continue
+            if not wait_if_paused(f"location {location}"):
                 break
             local_plan = {
                 **search_plan,
@@ -841,6 +1001,23 @@ def run(job, cancel):
                             "wikidata",
                             lambda: public_sources.wikidata_search(
                                 local_plan, location, per_location_limit, emit
+                            ),
+                        )
+                    )
+                if source == "hybrid" and "singapore" in location.casefold():
+                    tasks.append(
+                        pool.submit(
+                            provider,
+                            "acra",
+                            lambda: public_sources.acra_secondary_enrichment(
+                                public_sources.acra_search(
+                                    local_plan, location, per_location_limit, emit
+                                ),
+                                params["niche"],
+                                location,
+                                per_location_limit,
+                                cancel,
+                                emit,
                             ),
                         )
                     )
@@ -901,6 +1078,14 @@ def run(job, cancel):
                     )
                 for task in as_completed(tasks):
                     task.result()
+            completed_locations.add(location)
+            job["resume_checkpoint"]["completed_locations"] = list(
+                completed_locations
+            )
+            persist(
+                rows=[asdict(x) for x in lf.deduplicate(leads)],
+                count=len(lf.deduplicate(leads)),
+            )
         discovery_merges = []
         rows = lf.deduplicate(leads, merge_log=discovery_merges)
         if discovery_merges:
@@ -947,16 +1132,22 @@ def run(job, cancel):
         )
         if not cancel.is_set():
             done = []
-            with ThreadPoolExecutor(max_workers=4) as pool:
-                future_rows = [pool.submit(process, row) for row in rows]
-                for future in as_completed(future_rows):
-                    done.append(future.result())
-                    persist(
-                        rows=[asdict(x) for x in done],
-                        count=len(done),
-                        progress=60 + int(30 * len(done) / max(1, len(rows))),
-                    )
+            for offset in range(0, len(rows), 4):
+                if not wait_if_paused("contact enrichment"):
+                    break
+                batch = rows[offset : offset + 4]
+                with ThreadPoolExecutor(max_workers=4) as pool:
+                    future_rows = [pool.submit(process, row) for row in batch]
+                    for future in as_completed(future_rows):
+                        done.append(future.result())
+                        persist(
+                            rows=[asdict(x) for x in done],
+                            count=len(done),
+                            progress=60
+                            + int(30 * len(done) / max(1, len(rows))),
+                        )
             rows = done
+        wait_if_paused("final organization")
         final_merges = []
         rows = lf.deduplicate(rows, merge_log=final_merges)
         if final_merges:
@@ -1135,6 +1326,7 @@ def run(job, cancel):
     finally:
         with ACTIVE_LOCK:
             EVENTS.pop(job["id"], None)
+            PAUSES.pop(job["id"], None)
 
 
 def urlparse_host(url):

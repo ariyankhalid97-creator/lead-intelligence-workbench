@@ -124,6 +124,54 @@ class VerificationTests(unittest.TestCase):
         self.assertCountEqual(["Missing", "Failed"], checked)
         self.assertEqual(2, task["scope_count"])
 
+    def test_verified_company_linkedin_url_is_copied_to_saved_lead(self):
+        job = {
+            "id": "e" * 32,
+            "created_at": "2026-10-28T00:00:00+05:00",
+            "status": "complete",
+            "rows": [
+                {
+                    "name": "Example Company",
+                    "match_status": "service_match",
+                    "linkedin": "",
+                    "verification": "{}",
+                }
+            ],
+        }
+        engine.save(job)
+
+        def fake_verify(index, row, cancel):
+            return index, {
+                "status": "complete",
+                "social_discovery": {"status": "complete", "candidates": []},
+                "socials": {},
+                "website": {},
+                "ads": {},
+                "reviews": {},
+                "resolved_fields": {
+                    "linkedin": "https://www.linkedin.com/company/example-company/"
+                },
+            }
+
+        task = {
+            "id": "f" * 32,
+            "created_at": "2026-10-28T00:00:00+05:00",
+            "status": "queued",
+            "message": "",
+            "progress": 0,
+            "params": {"job_id": job["id"], "scope": "matches"},
+            "checked": 0,
+            "total": 0,
+            "summary": {},
+        }
+        with patch.object(verification, "_verify", side_effect=fake_verify):
+            verification._run(task, threading.Event())
+        saved = engine.get_job(job["id"], events=False)
+        self.assertEqual(
+            "https://www.linkedin.com/company/example-company/",
+            saved["rows"][0]["linkedin"],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

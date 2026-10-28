@@ -338,6 +338,16 @@ def _verify(index, row, cancel):
         "website": website_result,
         "socials": socials,
         "social_discovery": social_discovery,
+        "resolved_fields": {
+            "linkedin": socials.get("linkedin", {}).get("url", "")
+            if socials.get("linkedin", {}).get("status")
+            in {"published_on_website", "chrome_search_candidate_unverified", "listed_not_opened"}
+            else "",
+        },
+        "manual_decision_maker_search_url": (
+            "https://www.google.com/search?q="
+            + quote(f'"{row.get("name", "")}" decision maker site:linkedin.com/in')
+        ),
         "ads": {
             "status": ads_status,
             "tracking_signals": tracking,
@@ -398,6 +408,9 @@ def _run(task, cancel):
                 with engine.STORAGE_LOCK, SAVE_LOCK:
                     latest = engine.get_job(task["params"]["job_id"], events=False)
                     latest["rows"][index]["verification"] = json.dumps(result, ensure_ascii=False)
+                    resolved_linkedin = result.get("resolved_fields", {}).get("linkedin", "")
+                    if resolved_linkedin and not latest["rows"][index].get("linkedin"):
+                        latest["rows"][index]["linkedin"] = resolved_linkedin
                     engine.save(latest)
                 task["checked"] += 1
                 task["progress"] = int(100 * task["checked"] / max(1, task["total"]))

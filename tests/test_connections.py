@@ -3,6 +3,7 @@ import sqlite3
 import unittest
 from pathlib import Path
 from unittest.mock import patch
+from urllib.parse import parse_qs, urlparse
 
 import connections
 import public_sources
@@ -53,6 +54,59 @@ class ConnectionTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             connections.set_enabled("apollo", True)
         self.assertEqual("", connections.secret("apollo"))
+
+    def test_google_desktop_oauth_uses_loopback_pkce_and_same_exchange_uri(self):
+        connections._write(
+            "google_sheets",
+            {
+                "client_id": "123456789012345678901.apps.googleusercontent.com",
+                "client_secret": "secret-value",
+            },
+        )
+        callback = "http://127.0.0.1:8788"
+        destination = connections.google_authorize_url(callback)
+        query = parse_qs(urlparse(destination).query)
+        self.assertEqual([callback], query["redirect_uri"])
+        self.assertEqual(["S256"], query["code_challenge_method"])
+        self.assertEqual(43, len(query["code_challenge"][0]))
+        state = query["state"][0]
+        self.assertEqual(callback, connections.OAUTH_STATES[state]["callback"])
+
+        captured = {}
+
+        class Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+        with patch.object(
+            connections,
+            "urlopen",
+            side_effect=lambda request, timeout=0: (
+                captured.update(body=request.data.decode("utf-8")) or Response()
+            ),
+        ), patch.object(
+            connections.json,
+            "load",
+            return_value={"refresh_token": "refresh", "scope": connections.GOOGLE_SCOPE},
+        ):
+            connections.google_callback("code", state, callback)
+        exchanged = parse_qs(captured["body"])
+        self.assertEqual([callback], exchanged["redirect_uri"])
+        self.assertTrue(exchanged["code_verifier"][0])
+
+    def test_google_oauth_rejects_non_loopback_callback(self):
+        connections._write(
+            "google_sheets",
+            {
+                "client_id": "123456789012345678901.apps.googleusercontent.com",
+                "client_secret": "secret-value",
+            },
+        )
+        with self.assertRaises(ValueError):
+            connections.google_authorize_url("https://example.test/callback")
 
     def test_source_catalog_is_seeded_without_enabling_paid_sources(self):
         conn = sqlite3.connect(":memory:")
@@ -107,8 +161,48 @@ class ConnectionTests(unittest.TestCase):
             result = connections.sync_sheet(snapshot)
         self.assertEqual(1, result["rows"])
         self.assertEqual("sheet-123", result["spreadsheet_id"])
+        self.assertEqual(["Dentists · Dallas"], result["worksheets"])
+        self.assertEqual(
+            "Dentists · Dallas",
+            calls[0][1]["data"]["sheets"][0]["properties"]["title"],
+        )
         self.assertEqual("RAW", calls[-1][0].split("valueInputOption=")[-1])
         self.assertEqual("Acme Dental", calls[-1][1]["data"]["values"][1][2])
+
+    def test_sheet_sync_creates_separate_sanitized_worksheets(self):
+        tabs = connections._sheet_tabs(
+            {
+                "collections": [
+                    {"sheet_title": "E-sign Workflow - Real Estate", "rows": []},
+                    {"sheet_title": "E-sign Workflow - Hiring", "rows": []},
+                    {"sheet_title": "E-sign Workflow / Rentals", "rows": []},
+                ]
+            }
+        )
+        self.assertEqual(
+            [
+                "E-sign Workflow - Real Estate",
+                "E-sign Workflow - Hiring",
+                "E-sign Workflow - Rentals",
+            ],
+            [title for title, _ in tabs],
+        )
+
+    def test_running_offer_job_gets_its_own_titled_worksheet(self):
+        snapshot = connections.job_sheet_snapshot(
+            {
+                "updated_at": "2026-10-28T00:00:00Z",
+                "params": {
+                    "offer_title": "E-sign Workflow",
+                    "offer_segment_label": "Rental & leasing operators",
+                    "niche": "rental companies",
+                },
+                "rows": [{"name": "Acme Rentals", "city": "Dallas"}],
+            }
+        )
+        tab, values = connections._sheet_tabs(snapshot)[0]
+        self.assertEqual("E-sign Workflow - Rental & leasing operators", tab)
+        self.assertEqual("Acme Rentals", values[1][2])
 
     def test_enabled_places_provider_maps_api_fields_to_lead(self):
         connections._write(

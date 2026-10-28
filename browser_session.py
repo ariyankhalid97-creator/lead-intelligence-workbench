@@ -20,6 +20,7 @@ STATE = engine.ROOT / "data" / "browser-session.json"
 DEBUG_PORT = 9223
 DEBUG_BASE = f"http://127.0.0.1:{DEBUG_PORT}"
 SEARCH_LOCK = threading.Lock()
+LAST_GOOGLE_SEARCH = 0.0
 
 DESTINATIONS = {
     "facebook": "https://www.facebook.com/",
@@ -294,6 +295,142 @@ def _fallback_candidates(tokens, targeted_queries, enabled, cancel=None):
     return output, error
 
 
+def _canonical_linkedin_company_url(value: str) -> str:
+    """Return only a public LinkedIn company-page URL, never a person profile."""
+    try:
+        parsed = urlparse(str(value or ""))
+    except ValueError:
+        return ""
+    host = (parsed.hostname or "").casefold().removeprefix("www.")
+    match = re.match(r"^/company/([^/?#]+)", parsed.path or "", re.I)
+    if host not in {"linkedin.com", "www.linkedin.com"} or not match:
+        return ""
+    slug = match.group(1).strip()
+    return f"https://www.linkedin.com/company/{slug}/" if slug else ""
+
+
+def _google_linkedin_company(name: str, cancel=None) -> dict:
+    """Type one exact company lookup in visible Chrome and retain its public URL.
+
+    This is intentionally narrow: it does not read employee profiles, bypass a
+    checkpoint, or collect private LinkedIn data. A Google security challenge
+    is left open in Chrome and reported to the workflow for manual resumption.
+    """
+    global LAST_GOOGLE_SEARCH
+    query = f'"{name}" LinkedIn'
+    if cancel and cancel.is_set():
+        return {"status": "cancelled", "query": query, "candidates": []}
+    with SEARCH_LOCK:
+        if cancel and cancel.is_set():
+            return {"status": "cancelled", "query": query, "candidates": []}
+        checkpoint = search_checkpoint_status()
+        if checkpoint["paused"]:
+            return {
+                "status": "manual_checkpoint",
+                "query": query,
+                "candidates": [],
+                "browser_checkpoint": checkpoint["reason"],
+                "browser_retry_after_seconds": checkpoint["remaining_seconds"],
+            }
+        try:
+            if not running():
+                open_service("linkedin")
+            # Keep searches serial and moderately paced. This is normal browser
+            # operation, not an attempt to conceal automation or evade controls.
+            remaining = 2.5 - (time.monotonic() - LAST_GOOGLE_SEARCH)
+            if remaining > 0:
+                time.sleep(remaining)
+            from playwright.sync_api import sync_playwright
+
+            pw = sync_playwright().start()
+            browser = pw.chromium.connect_over_cdp(DEBUG_BASE)
+            context = browser.contexts[0]
+            page = context.new_page()
+            keep_open = False
+            try:
+                page.goto("https://www.google.com/", wait_until="domcontentloaded", timeout=18000)
+                box = page.locator('textarea[name="q"], input[name="q"]').first
+                box.click(timeout=5000)
+                box.press_sequentially(query, delay=45)
+                box.press("Enter")
+                page.wait_for_load_state("domcontentloaded", timeout=18000)
+                page.wait_for_timeout(900)
+                LAST_GOOGLE_SEARCH = time.monotonic()
+                response_text = page.locator("body").inner_text(timeout=3000)[:8000]
+                if re.search(
+                    r"unusual traffic|not a robot|captcha|verify you are human|security check",
+                    response_text,
+                    re.I,
+                ):
+                    reason = "Google security checkpoint is open in the dedicated Chrome profile; complete it manually, then resume verification"
+                    _pause_public_search(reason)
+                    keep_open = True
+                    return {
+                        "status": "manual_checkpoint",
+                        "query": query,
+                        "candidates": [],
+                        "browser_checkpoint": reason,
+                        "browser_retry_after_seconds": 900,
+                    }
+                anchors = page.locator("a").evaluate_all(
+                    "els => els.map(a => ({href:a.href || '', title:(a.innerText || a.textContent || '').trim()}))"
+                )
+                name_tokens = {
+                    token
+                    for token in re.findall(r"[a-z0-9]{3,}", name.casefold())
+                    if token not in {"the", "and", "llc", "inc", "company", "corp"}
+                }
+                candidates = []
+                seen = set()
+                for anchor in anchors:
+                    url = _canonical_linkedin_company_url(anchor.get("href", ""))
+                    if not url or url in seen:
+                        continue
+                    seen.add(url)
+                    title = re.sub(r"\s+", " ", str(anchor.get("title", ""))).strip()[:300]
+                    haystack = (url + " " + title).casefold()
+                    overlap = sorted(token for token in name_tokens if token in haystack)
+                    confidence = 0.94 if len(overlap) >= 2 else 0.76 if overlap else 0.35
+                    candidates.append(
+                        {
+                            "kind": "linkedin_company",
+                            "url": url,
+                            "title": title,
+                            "excerpt": title,
+                            "query": query,
+                            "source": "google_typed_company_lookup",
+                            "confidence": confidence,
+                            "matched_name_terms": overlap,
+                            "confirmation_state": "public_company_url_candidate",
+                        }
+                    )
+                accepted = next(
+                    (item for item in candidates if item["confidence"] >= 0.7), None
+                )
+                if accepted:
+                    # Open the public result once, as requested, but retain the
+                    # canonical result URL even if LinkedIn shows an auth wall.
+                    page.goto(accepted["url"], wait_until="domcontentloaded", timeout=18000)
+                    page.wait_for_timeout(500)
+                return {
+                    "status": "complete",
+                    "query": query,
+                    "candidates": candidates[:4],
+                    "candidate_count": len(candidates[:4]),
+                }
+            finally:
+                if not keep_open:
+                    page.close()
+                pw.stop()
+        except Exception as exc:
+            return {
+                "status": "failed",
+                "query": query,
+                "candidates": [],
+                "error": f"Exact Google LinkedIn lookup could not finish: {str(exc)[:260]}",
+            }
+
+
 def search_company_sources(name: str, location: str, cancel=None) -> dict:
     """Use the persistent visible Chrome profile for one bounded public Google search."""
     name = re.sub(r"\s+", " ", str(name or "")).strip()[:160]
@@ -321,12 +458,27 @@ def search_company_sources(name: str, location: str, cancel=None) -> dict:
     if checkpoint["paused"]:
         output, fallback_error = _fallback_candidates(tokens, targeted_queries, enabled, cancel)
         return {"status": "manual_checkpoint_with_fallback" if output else "manual_checkpoint", "query": query, "targeted_queries": targeted_queries, "search_url": search_url, "fallback_search_urls": fallback_search_urls, "search_engines": ["google", "bing"], "anchors_examined": 0, "decoded_host_counts": {}, "browser_checkpoint": checkpoint["reason"], "browser_retry_after_seconds": checkpoint["remaining_seconds"], "fallback_error": fallback_error, "candidates": output, "candidate_count": len(output)}
-    # Verification uses a bounded public-search adapter by default. It does not
-    # drive Google/Bing search pages, which avoids producing automated browser
-    # traffic and keeps the dedicated Chrome profile for manual review and Maps.
+    exact_linkedin = _google_linkedin_company(name, cancel)
+    if exact_linkedin.get("status") == "manual_checkpoint":
+        output, fallback_error = _fallback_candidates(tokens, targeted_queries, enabled, cancel)
+        return {
+            **exact_linkedin,
+            "status": "manual_checkpoint_with_fallback" if output else "manual_checkpoint",
+            "targeted_queries": targeted_queries,
+            "search_engines": ["google_typed_company_lookup", "public_search_adapter"],
+            "fallback_error": fallback_error,
+            "candidates": output,
+            "candidate_count": len(output),
+        }
+    # Other social/review sources still use the bounded public-search adapter
+    # unless the optional broad browser mode was explicitly enabled.
     if _state().get("automated_web_search_enabled") is not True:
         output, fallback_error = _fallback_candidates(tokens, targeted_queries, enabled, cancel)
-        return {"status": "complete_with_fallback" if output else "complete", "query": query, "targeted_queries": targeted_queries, "search_url": "", "fallback_search_urls": [], "search_engines": ["public_search_adapter"], "anchors_examined": 0, "decoded_host_counts": {}, "browser_checkpoint": "", "browser_automation_disabled": True, "fallback_error": fallback_error, "candidates": output, "candidate_count": len(output)}
+        combined = []
+        for item in [*exact_linkedin.get("candidates", []), *output]:
+            if item.get("url") and item.get("url") not in {row.get("url") for row in combined}:
+                combined.append(item)
+        return {"status": "complete_with_fallback" if combined else exact_linkedin.get("status", "complete"), "query": query, "linkedin_query": exact_linkedin.get("query", ""), "targeted_queries": targeted_queries, "search_url": "", "fallback_search_urls": [], "search_engines": ["google_typed_company_lookup", "public_search_adapter"], "anchors_examined": 0, "decoded_host_counts": {}, "browser_checkpoint": "", "browser_automation_disabled": True, "exact_linkedin_status": exact_linkedin.get("status", ""), "exact_linkedin_error": exact_linkedin.get("error", ""), "fallback_error": fallback_error, "candidates": combined, "candidate_count": len(combined)}
     browser_checkpoint = ""
     fallback_error = ""
     with SEARCH_LOCK:

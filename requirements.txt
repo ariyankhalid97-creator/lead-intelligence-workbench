@@ -3,4 +3,7 @@ phonenumbers==9.0.41
 ddgs==9.16.0
 playwright==1.64.0
 keyring==25.7.0
+# Optional advanced local crawler: Crawl4AI is intentionally not installed by
+# default because it adds a large browser/LLM dependency tree. The app includes
+# its own compact fit-Markdown pipeline and can add a Crawl4AI connector later.
 

@@ -12,11 +12,17 @@ import ai_tasks
 import engine
 import local_ai
 import verification
+import connections
+import reference_library
 from contacts import now
 
 LOCK = threading.RLock()
 EVENTS: dict[str, threading.Event] = {}
-ACTIVE = {"queued", "running", "waiting"}
+ACTIVE = {"queued", "running", "waiting", "pause_requested", "paused"}
+
+
+class SearchInterrupted(Exception):
+    pass
 STAGES = (
     ("discovery", "Discover and enrich"),
     ("verification", "Verify qualified prospects"),
@@ -49,7 +55,7 @@ def init(recover=True):
             "CREATE TABLE IF NOT EXISTS workflow_tasks(id TEXT PRIMARY KEY,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,status TEXT NOT NULL,payload TEXT NOT NULL)"
         )
         rows = conn.execute(
-            "SELECT payload FROM workflow_tasks WHERE status IN ('queued','running','waiting') ORDER BY updated_at"
+            "SELECT payload FROM workflow_tasks WHERE status IN ('queued','running','waiting','pause_requested','paused') ORDER BY updated_at"
         ).fetchall()
     if not recover:
         return
@@ -136,14 +142,74 @@ def cancel(task_id):
 
 
 def _wait_for_job(task, cancel):
+    last_sheet_sync = 0.0
+    last_sheet_count = -1
+    sheet_state = {}
     while not cancel.is_set():
         job = engine.get_job(task["job_id"], events=False)
         if not job:
             raise ValueError("The linked search no longer exists")
         status = job.get("status", "")
+        if status == "interrupted":
+            raise SearchInterrupted(
+                "Search interrupted by an application restart. Continue the saved search to resume this workflow."
+            )
+        row_count = len(job.get("rows", []))
+        live_requested = bool(job.get("params", {}).get("live_sheet_sync"))
+        due = time.monotonic() - last_sheet_sync >= 30
+        final_refresh = status not in ACTIVE and row_count != last_sheet_count
+        if live_requested and (due or final_refresh):
+            last_sheet_sync = time.monotonic()
+            google = next(
+                (
+                    item
+                    for item in connections.statuses().get("providers", [])
+                    if item.get("id") == "google_sheets"
+                ),
+                {},
+            )
+            if google.get("connected"):
+                try:
+                    synced = connections.sync_job_sheet(job)
+                    last_sheet_count = row_count
+                    sheet_state = {
+                        "live_sheet_status": "synced",
+                        "live_sheet_rows": synced.get("rows", 0),
+                        "live_sheet_url": synced.get("url", ""),
+                        "live_sheet_worksheet": (synced.get("worksheets") or [""])[0],
+                    }
+                except Exception as exc:
+                    sheet_state = {
+                        "live_sheet_status": "error",
+                        "live_sheet_error": str(exc)[:300],
+                    }
+            else:
+                sheet_state = {"live_sheet_status": "authorization_required"}
         task["progress"] = min(44, int((job.get("progress", 0) or 0) * 0.44))
-        task["status"] = "waiting" if status == "waiting" else "running"
-        _stage(task, "discovery", "waiting" if status == "waiting" else "running", job.get("message", "Searching public sources"), records=len(job.get("rows", [])))
+        task["status"] = (
+            "paused"
+            if status in {"paused", "pause_requested"}
+            else "waiting"
+            if status == "waiting"
+            else "running"
+        )
+        live_message = (
+            f" · {sheet_state.get('live_sheet_rows', 0)} rows live in Google Sheets"
+            if sheet_state.get("live_sheet_status") == "synced"
+            else " · Google Sheets authorization required"
+            if sheet_state.get("live_sheet_status") == "authorization_required"
+            else " · Google Sheets sync needs attention"
+            if sheet_state.get("live_sheet_status") == "error"
+            else ""
+        )
+        stage_status = (
+            "paused"
+            if status in {"paused", "pause_requested"}
+            else "waiting"
+            if status == "waiting"
+            else "running"
+        )
+        _stage(task, "discovery", stage_status, job.get("message", "Searching public sources") + live_message, records=row_count, **sheet_state)
         if status not in ACTIVE:
             return job
         cancel.wait(1.2)
@@ -245,7 +311,47 @@ def _run(task, cancel):
         task["progress"] = 80
         organized = engine.get_job(task["job_id"], events=False) or {}
         organization = organized.get("organization", {})
-        _stage(task, "organization", "complete", "Organized result saved to the research library", records=len(organized.get("rows", [])), duplicates=organization.get("duplicates_consolidated", 0))
+        organization_message = "Organized result saved to the research library"
+        sheet_details = {}
+        if organized.get("params", {}).get("offer_title"):
+            google = next(
+                (
+                    item
+                    for item in connections.statuses().get("providers", [])
+                    if item.get("id") == "google_sheets"
+                ),
+                {},
+            )
+            if google.get("connected"):
+                try:
+                    synced = connections.sync_sheet(reference_library.load())
+                    wanted = " - ".join(
+                        part
+                        for part in (
+                            organized["params"].get("offer_title", ""),
+                            organized["params"].get("offer_segment_label", ""),
+                        )
+                        if part
+                    )
+                    organization_message += "; Google Sheets worksheet updated"
+                    sheet_details = {
+                        "google_sheet_url": synced.get("url", ""),
+                        "google_sheet_worksheet": next(
+                            (
+                                title
+                                for title in synced.get("worksheets", [])
+                                if title.casefold() == wanted.casefold()
+                            ),
+                            wanted,
+                        ),
+                    }
+                except Exception as exc:
+                    organization_message += "; Google Sheets sync needs attention"
+                    sheet_details = {"google_sheet_error": str(exc)[:300]}
+            else:
+                organization_message += "; connect Google Sheets to create its titled worksheet"
+                sheet_details = {"google_sheet_status": "not_connected"}
+        _stage(task, "organization", "complete", organization_message, records=len(organized.get("rows", [])), duplicates=organization.get("duplicates_consolidated", 0), **sheet_details)
 
         model = _selected_model(task)
         if model:
@@ -267,6 +373,8 @@ def _run(task, cancel):
             eligible=eligible,
         )
         task.update(status="complete", progress=100, message="Linked workflow complete · research organized · outreach approval required", result={"records": len(final.get("rows", [])), "outreach_ready": eligible})
+    except SearchInterrupted as exc:
+        task.update(status="interrupted", message=str(exc), progress=min(99, task.get("progress", 0)))
     except InterruptedError as exc:
         task.update(status="cancelled", message=str(exc), progress=min(99, task.get("progress", 0)))
     except Exception as exc:

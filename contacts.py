@@ -402,6 +402,77 @@ def walk_json(value):
             yield from walk_json(child)
 
 
+def compact_markdown(body: str, limit: int = 12000) -> str:
+    """Convert a page into bounded, boilerplate-reduced research Markdown.
+
+    The implementation is deliberately local and deterministic. It follows the
+    useful clean/fit-content pattern from open-source crawlers without sending
+    a page to a cloud service or giving an LLM control of the browser.
+    """
+    soup = BeautifulSoup(str(body or "")[:2_000_000], "html.parser")
+    for tag in soup(
+        [
+            "script",
+            "style",
+            "noscript",
+            "svg",
+            "canvas",
+            "template",
+            "iframe",
+            "nav",
+            "aside",
+        ]
+    ):
+        tag.decompose()
+    for node in list(soup.find_all(True)):
+        marker = " ".join(
+            [
+                str(node.get("id", "")),
+                " ".join(node.get("class", [])),
+                str(node.get("role", "")),
+                str(node.get("aria-label", "")),
+            ]
+        )
+        if re.search(
+            r"\b(?:cookie|consent|popup|modal|newsletter|breadcrumbs?|pagination|share-buttons?|social-share|advert(?:isement|ising)?|site-header|site-footer|navigation)\b",
+            marker,
+            re.I,
+        ):
+            node.decompose()
+    root = soup.find("main") or soup.find("article") or soup.body or soup
+    lines, seen = [], set()
+    for node in root.find_all(
+        ["h1", "h2", "h3", "h4", "p", "li", "address", "dt", "dd", "td"]
+    ):
+        text = re.sub(r"\s+", " ", node.get_text(" ", strip=True)).strip()
+        if len(text) < 2:
+            continue
+        key = text.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        prefix = (
+            "# "
+            if node.name == "h1"
+            else "## "
+            if node.name == "h2"
+            else "### "
+            if node.name in {"h3", "h4"}
+            else "- "
+            if node.name in {"li", "dt", "dd"}
+            else ""
+        )
+        lines.append(prefix + text)
+        if sum(len(item) + 1 for item in lines) >= limit:
+            break
+    compact = "\n".join(lines).strip()[:limit]
+    if len(compact) >= 80:
+        return compact
+    # Very small pages often use only divs. Retain their readable text rather
+    # than incorrectly treating the page as empty.
+    return re.sub(r"\s+", " ", root.get_text(" ", strip=True)).strip()[:limit]
+
+
 def extract_document(body: str, url: str, lead: Lead) -> tuple[str, list[str]]:
     soup = BeautifulSoup(body, "html.parser")
     records = json.loads(lead.evidence or "[]")
@@ -532,6 +603,8 @@ def extract_document(body: str, url: str, lead: Lead) -> tuple[str, list[str]]:
     for tag in soup(["script", "style", "noscript", "svg"]):
         tag.decompose()
     visible = soup.get_text(" ", strip=True)
+    fit_markdown = compact_markdown(body)
+    fit_text = re.sub(r"^#{1,3}\s+|^-\s+", "", fit_markdown, flags=re.M)
     roles = r"Owner|Founder|President|Chief Executive Officer|CEO|General Manager|Operations Manager|Managing Director|Partner"
     person_patterns = (
         rf"\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+){{1,3}})\s*[,|\-–]\s*({roles})\b",
@@ -556,7 +629,9 @@ def extract_document(body: str, url: str, lead: Lead) -> tuple[str, list[str]]:
         evidence("decision_maker_role", lead.decision_maker_role, "structured data")
     from prospecting import collect_signals
 
-    collect_signals(lead, visible, url, structured_people=structured_people)
+    collect_signals(
+        lead, fit_text or visible, url, structured_people=structured_people
+    )
     add_email(visible, "visible page text")
     add_phone(visible, "visible page text")
     host = (urlparse(url).hostname or "").removeprefix("www.")
@@ -575,13 +650,15 @@ def extract_document(body: str, url: str, lead: Lead) -> tuple[str, list[str]]:
     lead.evidence = json.dumps(records, ensure_ascii=False)
     from research import add_observation
 
-    excerpts = [visible[:450]]
+    excerpts = [(fit_markdown or visible)[:700]]
     for match in re.finditer(
         r"owner[- ]operated|family[- ]owned|independently owned|one[- ]person|sole proprietor|self[- ]employed|work alone|solo operator|our agency|agency team|franchise|locations nationwide",
-        visible,
+        fit_text or visible,
         re.I,
     ):
-        excerpts.append(visible[max(0, match.start() - 80) : match.end() + 150])
+        excerpts.append(
+            (fit_text or visible)[max(0, match.start() - 80) : match.end() + 150]
+        )
         if sum(map(len, excerpts)) > 1250:
             break
     if visible.strip():
@@ -600,7 +677,7 @@ def extract_document(body: str, url: str, lead: Lead) -> tuple[str, list[str]]:
             len(value),
         )
 
-    return visible, sorted(dict.fromkeys(links), key=link_priority)
+    return fit_text or visible, sorted(dict.fromkeys(links), key=link_priority)
 
 
 def enrich(

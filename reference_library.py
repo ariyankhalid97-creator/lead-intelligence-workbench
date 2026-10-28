@@ -179,6 +179,13 @@ def _compiled_collections() -> list[dict]:
             continue
         rows = [row for row in rows if isinstance(row, dict)]
         params = job.get("params") if isinstance(job.get("params"), dict) else {}
+        offer_title = str(params.get("offer_title") or "").strip()
+        segment_title = str(params.get("offer_segment_label") or "").strip()
+        sheet_title = (
+            " - ".join(part for part in (offer_title, segment_title) if part)
+            if offer_title
+            else ""
+        )
         collections.append(
             {
                 "id": job.get("id", ""),
@@ -192,6 +199,7 @@ def _compiled_collections() -> list[dict]:
                     if part
                 ),
                 "niche": params.get("niche", "Research"),
+                "sheet_title": sheet_title,
                 "location": params.get("location", "Anywhere"),
                 "created_at": job.get("created_at", ""),
                 "updated_at": updated_at or "",

@@ -26,6 +26,7 @@ import connections
 import intelligence
 import sequence_engine
 import workflow
+import personal_offer
 
 WEB = engine.SOURCE_ROOT / "dashboard"
 
@@ -83,7 +84,7 @@ class Handler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         path = parsed.path
         query_values = parse_qs(parsed.query)
-        if path == "/" and (
+        if path in {"/", "/api/connections/google/callback"} and (
             query_values.get("code")
             or query_values.get("state")
             or query_values.get("error")
@@ -123,7 +124,11 @@ class Handler(BaseHTTPRequestHandler):
             self.send(browser_session.status())
             return
         if path == "/api/connections":
-            self.send(connections.statuses())
+            connection_status = connections.statuses()
+            connection_status["google_redirect_uri"] = (
+                f"http://127.0.0.1:{self.server.server_port}"
+            )
+            self.send(connection_status)
             return
         if path == "/api/connections/catalog":
             with engine.connection() as conn:
@@ -153,6 +158,17 @@ class Handler(BaseHTTPRequestHandler):
                 country, niche, query
             )
             self.send(payload)
+            return
+        if path == "/api/personal/offer-plan":
+            values = parse_qs(parsed.query)
+            try:
+                self.send(personal_offer.plan(
+                    values.get("offer", [""])[0],
+                    values.get("country", ["US"])[0],
+                    values.get("segment", [""])[0],
+                ))
+            except ValueError as exc:
+                self.send({"error": str(exc)}, 400)
             return
         if path == "/api/outreach/status":
             self.send(outreach.provider_status())
@@ -417,6 +433,9 @@ class Handler(BaseHTTPRequestHandler):
             if self.path == "/api/intelligence/email-verifications":
                 self.send(intelligence.record_email_verification(params), 201)
                 return
+            if self.path == "/api/personal/offer-activate":
+                self.send(personal_offer.activate(str(params.get("offer", ""))), 201)
+                return
             if self.path == "/api/outreach/sequences":
                 self.send(
                     {
@@ -509,6 +528,16 @@ class Handler(BaseHTTPRequestHandler):
             if self.path.startswith("/api/jobs/") and self.path.endswith("/cancel"):
                 self.send(
                     {"cancel_requested": engine.cancel_job(self.path.split("/")[-2])}
+                )
+                return
+            if self.path.startswith("/api/jobs/") and self.path.endswith("/pause"):
+                self.send(
+                    {"pause_requested": engine.pause_job(self.path.split("/")[-2])}
+                )
+                return
+            if self.path.startswith("/api/jobs/") and self.path.endswith("/resume"):
+                self.send(
+                    {"resumed": engine.resume_job(self.path.split("/")[-2])}, 202
                 )
                 return
             self.send({"error": "Not found"}, 404)

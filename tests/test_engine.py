@@ -5,6 +5,7 @@ import tempfile
 import sys
 from types import SimpleNamespace
 import threading
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -418,6 +419,20 @@ class QualityTests(unittest.TestCase):
         )
         self.assertTrue(lead.phone.startswith("+1"))
 
+    def test_compact_markdown_removes_navigation_and_keeps_main_evidence(self):
+        document = """
+        <nav><a>Home</a><a>Pricing</a></nav>
+        <div class="cookie-consent">Accept every cookie</div>
+        <main><h1>Northstar Rentals</h1><p>We prepare lease agreements and inspection reports.</p>
+        <ul><li>Residential property management</li></ul></main>
+        <footer>Copyright and twenty repeated footer links</footer>
+        """
+        compact = contacts.compact_markdown(document)
+        self.assertIn("# Northstar Rentals", compact)
+        self.assertIn("lease agreements", compact)
+        self.assertNotIn("Accept every cookie", compact)
+        self.assertNotIn("Pricing", compact)
+
     def test_domain_keywords_alone_are_not_service_evidence(self):
         lead = lf.Lead(
             name="hoodcleaning.test",
@@ -537,6 +552,8 @@ class PipelineTests(unittest.TestCase):
             engine.LOG.removeHandler(handler)
         self.root_patch.stop()
         self.db_patch.stop()
+        engine.EVENTS.clear()
+        engine.PAUSES.clear()
         self.tmp.cleanup()
 
     def job(self, source="hybrid"):
@@ -605,7 +622,41 @@ class PipelineTests(unittest.TestCase):
     def test_restart_marks_unfinished_job_interrupted(self):
         job = self.job()
         engine.init()
-        self.assertEqual("interrupted", engine.get_job(job["id"])["status"])
+        saved = engine.get_job(job["id"])
+        self.assertEqual("interrupted", saved["status"])
+        self.assertTrue(saved["interruption"]["resumable"])
+        self.assertEqual("application_restart", saved["interruption"]["reason"])
+        self.assertTrue(
+            any(event["message"] == "Search interrupted by application restart" for event in saved["events"])
+        )
+
+    def test_pause_and_continue_retains_same_search(self):
+        job = self.job("osm")
+        pause = threading.Event()
+        pause.set()
+        worker = threading.Thread(
+            target=engine.run,
+            args=(job, threading.Event(), pause),
+            daemon=True,
+        )
+        with patch.object(lf, "osm_search", return_value=[]):
+            worker.start()
+            deadline = time.monotonic() + 3
+            while time.monotonic() < deadline:
+                if engine.get_job(job["id"], events=False)["status"] == "paused":
+                    break
+                time.sleep(0.03)
+            self.assertEqual(
+                "paused", engine.get_job(job["id"], events=False)["status"]
+            )
+            pause.clear()
+            worker.join(timeout=5)
+        self.assertFalse(worker.is_alive())
+        saved = engine.get_job(job["id"])
+        self.assertIn(saved["status"], {"complete", "partial"})
+        messages = [event["message"] for event in saved["events"]]
+        self.assertIn("Search paused at safe checkpoint", messages)
+        self.assertIn("Search continued from safe checkpoint", messages)
 
     def test_cancel_retains_already_collected_website(self):
         job = self.job("osm")

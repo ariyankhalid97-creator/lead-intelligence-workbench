@@ -45,16 +45,39 @@ class BrowserCheckpointTests(unittest.TestCase):
         saved = json.loads(self.state.read_text(encoding="utf-8"))
         self.assertNotIn("search_pause_until", saved)
 
-    def test_normal_verification_uses_fallback_without_driving_search_pages(self):
+    def test_normal_verification_types_exact_linkedin_lookup_then_uses_fallback(self):
         candidate = {"kind": "linkedin_company", "url": "https://linkedin.com/company/example"}
+        exact = {
+            "status": "complete",
+            "query": '"Example" LinkedIn',
+            "candidates": [candidate],
+        }
         with (
-            patch.object(browser_session, "_fallback_candidates", return_value=([candidate], "")),
-            patch.object(browser_session, "running") as running,
+            patch.object(browser_session, "_google_linkedin_company", return_value=exact) as google,
+            patch.object(browser_session, "_fallback_candidates", return_value=([], "")),
         ):
             result = browser_session.search_company_sources("Example", "Dallas, Texas")
         self.assertTrue(result["browser_automation_disabled"])
-        self.assertEqual(["public_search_adapter"], result["search_engines"])
-        running.assert_not_called()
+        self.assertEqual(
+            ["google_typed_company_lookup", "public_search_adapter"],
+            result["search_engines"],
+        )
+        self.assertEqual([candidate], result["candidates"])
+        google.assert_called_once()
+
+    def test_only_company_pages_are_accepted_as_linkedin_company_urls(self):
+        self.assertEqual(
+            "https://www.linkedin.com/company/example-co/",
+            browser_session._canonical_linkedin_company_url(
+                "https://www.linkedin.com/company/example-co/?trk=public"
+            ),
+        )
+        self.assertEqual(
+            "",
+            browser_session._canonical_linkedin_company_url(
+                "https://www.linkedin.com/in/private-person/"
+            ),
+        )
 
 
 if __name__ == "__main__":

@@ -19,7 +19,11 @@ from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_ope
 import ai_teaching
 
 BASE_URL = "http://127.0.0.1:11434"
-DEFAULT_MODEL = "qwen3.5:4b"
+# Gemma is the strongest installed general-purpose model on this workstation.
+# Keep the smaller Qwen model available for quick phrase work, but make Gemma
+# the default for evidence review, strict compilation and drafting.
+DEFAULT_MODEL = "gemma4:e4b"
+FAST_MODEL = "qwen3.5:4b"
 REQUEST_TIMEOUT = 90
 QUEUE_TIMEOUT = 15
 MAX_RESPONSE_BYTES = 2_000_000
@@ -208,7 +212,13 @@ def _models():
     records = sorted(
         records[:32],
         key=lambda record: (
-            not isinstance(record, dict) or record.get("name") != DEFAULT_MODEL
+            2
+            if not isinstance(record, dict)
+            else 0
+            if record.get("name") == DEFAULT_MODEL
+            else 1
+            if record.get("name") == FAST_MODEL
+            else 2
         ),
     )
     for record in records:
@@ -251,10 +261,32 @@ def _models():
                 if isinstance(size, int) and not isinstance(size, bool)
                 else 0,
                 "parameter_size": str(details.get("parameter_size", ""))[:40],
+                "recommended_for": (
+                    [
+                        "lead qualification",
+                        "strict intelligence",
+                        "email judgment",
+                        "outreach drafting",
+                    ]
+                    if name == DEFAULT_MODEL
+                    else ["fast search phrase planning"]
+                    if name == FAST_MODEL
+                    else []
+                ),
             }
         )
         seen.add(name)
-    return sorted(models, key=lambda m: (m["name"] != DEFAULT_MODEL, m["name"]))
+    return sorted(
+        models,
+        key=lambda m: (
+            0
+            if m["name"] == DEFAULT_MODEL
+            else 1
+            if m["name"] == FAST_MODEL
+            else 2,
+            m["name"],
+        ),
+    )
 
 
 def status():
@@ -267,6 +299,16 @@ def status():
             else "No compatible local chat model was found. Search and verification still work, but AI phrase expansion and evidence interpretation are unavailable, so niche coverage may be less precise. Start Ollama with an installed GGUF chat model, then check again.",
             "models": models,
             "default_model": models[0]["name"] if models else "",
+            "task_models": {
+                "planning": next(
+                    (item["name"] for item in models if item["name"] == FAST_MODEL),
+                    models[0]["name"] if models else "",
+                ),
+                "analysis": next(
+                    (item["name"] for item in models if item["name"] == DEFAULT_MODEL),
+                    models[0]["name"] if models else "",
+                ),
+            },
         }
     except LocalAIError as exc:
         return {

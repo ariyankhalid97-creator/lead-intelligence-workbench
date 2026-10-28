@@ -50,11 +50,11 @@ const path = require("path");
     await page.waitForFunction(() => location.hash === "#sources");
     await page.waitForFunction(
       () =>
-        document.querySelectorAll("#sourceCards .source-card").length === 12,
+        document.querySelectorAll("#sourceCards .source-card").length === 14,
     );
     assert.strictEqual(
       await page.locator("#sourceCards .source-card").count(),
-      12,
+      14,
     );
     assert.strictEqual(
       await page.locator("#connectionsPanel").getAttribute("open"),

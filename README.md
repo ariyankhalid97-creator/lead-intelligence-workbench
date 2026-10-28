@@ -2,87 +2,152 @@
 
 ### Local-first business discovery, evidence-backed lead intelligence, and approval-gated outreach
 
-Lead Extractor is a free Windows desktop workspace for finding public business leads, collecting published contact details, verifying evidence, organizing research, and preparing carefully reviewed outreach. It combines multiple public sources in one linked workflow and keeps databases, browser sessions, local AI prompts, and campaign data on your computer.
+Lead Extractor is a free Windows desktop workspace that turns a niche and location into an organized research collection. It discovers public business records, enriches published contacts, verifies company evidence, consolidates duplicates, compiles local-AI intelligence, synchronizes approved data to Google Sheets, and prepares outreach for human review.
 
-No paid AI key is required. No subscription is required. Local AI is optional.
+The application runs locally. A paid AI key and subscription are not required.
 
 ![Lead Extractor desktop interface](docs/lead-extractor-ui.jpg)
 
-## Why this project exists
+## What the workflow does
 
-Most lead tools either lock useful data behind credits or return a flat, messy list with little explanation. Lead Extractor is built around a different idea: every useful result should carry its source, evidence strength, contact quality, and unresolved uncertainty.
+One search can move through the complete pipeline without changing tabs:
 
-The app helps you move through one continuous process:
+1. **Plan** — expand the niche with curated terminology, country context, and optional local AI.
+2. **Discover** — search applicable Maps, open-data, website, directory, registry, and public-profile sources.
+3. **Enrich** — visit bounded public business pages and retain published websites, phones, emails, and social links.
+4. **Verify** — perform a second pass for websites, email-domain signals, company LinkedIn URLs, reviews, hiring signals, advertising review paths, and technographic evidence.
+5. **Organize** — normalize names, consolidate strong duplicates, retain conflicts, classify contact quality, and save a grouped research collection.
+6. **Compile** — use a compatible local Ollama model to interpret retained evidence without inventing missing facts.
+7. **Export or outreach** — update a titled Google Sheets worksheet or prepare a Zoho campaign that still requires explicit approval.
 
-1. Discover businesses and individual service providers.
-2. Collect public websites, phones, emails, profiles, and listing evidence.
-3. Verify promising records with a second research pass.
-4. Merge exact duplicates while preserving source history.
-5. Compile an organized research library.
-6. Prepare niche-specific outreach for explicit human approval.
+Searches have durable checkpoints. Pause, continue, application-restart recovery, provider failures, CAPTCHA waits, and partial results remain visible in the same saved run.
 
-## Highlights
+## Main capabilities
 
-- **One linked workflow:** discovery, verification, organization, strict intelligence compilation, and outreach preparation run in sequence.
-- **Multi-source waterfall:** Google Maps through a dedicated Chrome profile, OpenStreetMap, public web discovery, Wikidata, the NPI Registry for relevant US healthcare searches, business websites, and an optional local Maps Extractor API.
-- **Platform-aware research:** source-specific public-profile searches for Clutch, GoodFirms, Y Combinator, Product Hunt, BetaList, Wellfound, Yelp, Yellow Pages, Manta, Chamber of Commerce, BBB, MapQuest, Alignable, Houzz, Thumbtack, Bark, Taskrabbit, Upwork, Fiverr, and other niche-relevant directories.
-- **Market-signal verification:** bounded public discovery for Indeed, RemoteOK, and Wellfound, plus direct review links for the Meta Ad Library and Google Ads Transparency Center.
-- **200 curated niche packs:** deterministic phrases and aliases improve query planning for home services, automotive, professional services, healthcare, hospitality, and specialty businesses. Editable search-method, review-monitoring and vertical technology-verification packs extend this memory without treating hypotheses as facts.
-- **Optional local AI:** automatically detects compatible local Ollama chat models and uses them for phrase suggestions, evidence summaries, and draft assistance.
-- **Evidence-first records:** observed facts, search snippets, inferred classifications, and unknown fields remain distinguishable.
-- **Durable diagnostics:** exact queries, provider failures, stop reasons, CAPTCHA pauses, timings, and duplicate decisions are retained for review.
-- **Entity-safe normalization:** directory boilerplate, location suffixes, and pipe-delimited host labels are removed before deduplication; probable multi-listing containers are rejected.
-- **NPI website waterfall:** relevant registry providers receive a second exact-name/taxonomy/city lookup, followed by published website-contact extraction.
-- **Safe outreach controls:** reusable templates, per-lead AI drafts, suppression checks, daily limits, randomized respectful pacing, and explicit approval before Zoho sends.
-- **Local desktop experience:** borderless, resizable Electron interface with built-in back, forward, refresh, minimize, maximize, and close controls.
-- **GitHub updates and repair:** installed builds can check the official release channel, download a future update, and rebuild the local Python runtime without deleting saved research.
-- **Optional account connections:** Google Sheets OAuth, Google Places, Apollo, Apify, and Outscraper credentials are managed from one screen and stored in Windows Credential Manager. Paid providers remain disabled until tested and explicitly enabled.
-- **Country-aware foundation:** searches can identify a United States, Singapore, Malaysia, Australia, or manual country context while preserving the original location text.
+### Discovery and source planning
 
-## Source waterfall
+- Google Maps through a persistent, dedicated Chrome profile.
+- OpenStreetMap and Overpass public data.
+- Best-effort public web discovery with source URLs and negative-domain filtering.
+- Business websites with robots-aware retrieval and bounded JavaScript rendering.
+- Wikidata organizations and the US NPI Registry where relevant.
+- Country-aware official-directory workspace for the United States, Singapore, Malaysia, and Australia.
+- Public profile strategies for Yelp, Yellow Pages, Manta, Chamber of Commerce, BBB, MapQuest, Alignable, Houzz, Thumbtack, Bark, Taskrabbit, Clutch, GoodFirms, Y Combinator, Product Hunt, BetaList, Wellfound, and other niche-relevant sources.
+- Hiring and market signals from applicable public Indeed, RemoteOK, Wellfound, Meta Ad Library, and Google Ads Transparency routes.
+- Optional Google Places, Apollo, Apify, and Outscraper connections. Paid or licensed providers stay off until configured and explicitly enabled.
 
-Lead Extractor fans out to applicable sources automatically. A source failure does not discard records collected by the other providers.
+### Reusable research knowledge
 
-| Source | Role | Notes |
-|---|---|---|
-| Google Maps in Chrome | Local business discovery | Uses a dedicated, reusable Chrome profile; security checkpoints require the user |
-| OpenStreetMap / Overpass | Open geographic listings | Free and attribution-aware; coverage varies by place and niche |
-| Public web discovery | Websites and public profiles | Uses bounded queries and keeps source URLs |
-| Business websites | Published contacts and evidence | Respects `robots.txt`, page limits, timeouts, and request pacing |
-| Wikidata | Structured organization candidates | Best-effort public entity discovery |
-| US NPI Registry | Healthcare providers | Used only for mapped healthcare taxonomies; a bounded second pass looks for the provider's practice website and published contacts |
-| Clutch / GoodFirms | B2B service-company profiles | Public profile discovery; directory claims remain unverified until corroborated |
-| YC / Product Hunt / BetaList | Startup and product signals | Activated for relevant startup, software, and product niches |
-| Indeed / RemoteOK / Wellfound | Hiring and company signals | Attached to an existing company as supporting evidence, not emitted as a separate lead |
-| Meta / Google ad transparency | Advertising review | Opens exact-company review paths; a tracking tag alone is not proof of an active campaign |
-| Business Registries workspace | Official entity and licence research | Country/niche directory finder for reviewed US, Singapore, Malaysia and Australia sources; access and fee requirements remain explicit |
+- 200 curated niche packs covering local services, healthcare, professional services, automotive, hospitality, property, hiring, rentals, and specialist businesses.
+- Editable aliases, exclusion terms, decision-maker roles, source priorities, review signals, and technology hypotheses.
+- Search-method packs for city/category discovery, nearby coverage, website gaps, reputation, identity resolution, contact enrichment, and cross-source comparison.
+- A neutral offer-to-buyer planner that converts a product or service into likely buyer segments and an evidence-aware search configuration.
+- Niche packs and directory definitions are versioned with the project because they improve results for every user. Personal searches, local model history, credentials, exports, and campaign records are not.
 
-The project does not bypass logins, CAPTCHAs, paywalls, rate limits, or access controls. It does not claim that every platform exposes a public API.
+### Evidence and data quality
 
-## Local AI that remains optional
+- Directory boilerplate, location suffixes, and host labels are removed before deduplication.
+- Unbounded multi-listing containers and repeated-phone title blocks are rejected.
+- News, obituary, and general-media pages are excluded unless they publish explicit `LocalBusiness` or `Organization` metadata.
+- Every retained claim distinguishes first-party observations, directory claims, search snippets, model suggestions, and unknown values.
+- Exact duplicates are merged while source history and conflicting fields remain reviewable.
+- Email addresses are classified as possible-direct, general-business, support, automated, or uncertain.
+- DNS and MX observations describe the mail domain only; they never claim mailbox deliverability.
 
-The app reads the model inventory from Ollama at `http://127.0.0.1:11434`, checks each local model’s capabilities, excludes embedding/cloud models, and offers every compatible local GGUF completion model it can verify. It does not assume one hard-coded model.
+### Local extraction waterfall
 
-If Ollama or a compatible model is unavailable, the app explains what is missing and continues normally. Business discovery, website checks, verification, exports, history, and manual outreach templates still work. Only AI phrase expansion, evidence interpretation, and AI-written drafts are unavailable, so difficult niche searches may be less precise.
+The website layer uses a free, bounded escalation path:
 
-AI output is advisory. It cannot turn a search snippet into a verified fact, prove mailbox deliverability, or send a message by itself.
+1. Validate the public URL and inspect `robots.txt`.
+2. Fetch ordinary HTML with pacing, timeouts, redirect checks, and diagnostics.
+3. Render a JavaScript shell only when normal HTML has no usable page content.
+4. Stop and retain diagnostics when a WAF or human-verification challenge appears.
+5. Convert readable content into compact, boilerplate-reduced Markdown.
+6. Extract structured organization data, published contacts, social URLs, workflow signals, and literal evidence excerpts.
+
+This follows the useful clean-content and typed-extraction patterns found in modern open-source crawlers while keeping the default runtime small and local. It does not embed Firecrawl's AGPL server or require a hosted crawling key.
+
+### LinkedIn-assisted verification
+
+After discovery, the verification stage can type an exact public Google query for each retained business:
+
+```text
+"Business Name" LinkedIn
+```
+
+Only public `linkedin.com/company/...` candidates are accepted. A matching company URL is saved in the lead, research library, exports, and Google Sheets. The app provides a separate manual decision-maker search link; it does not scrape authenticated personal profiles. Google or LinkedIn security checkpoints are never bypassed.
+
+## Local AI
+
+Lead Extractor reads the Ollama model inventory from `http://127.0.0.1:11434`, rejects cloud and embedding-only models, and offers locally installed GGUF completion models.
+
+The current task routing favors:
+
+- a faster compatible model for query and phrase planning;
+- a stronger compatible model for qualification, strict intelligence, email judgment, and outreach drafting.
+
+If no model is available, discovery, verification, organization, exports, Google Sheets, and manual templates continue to work. AI output is advisory and cannot browse independently, promote a snippet into a verified fact, or send outreach without approval.
+
+## Google Sheets setup
+
+An API key cannot create or edit a private spreadsheet. Lead Extractor uses Google OAuth with the limited `drive.file` scope, which allows it to manage files the app creates or opens.
+
+1. In Google Cloud, enable **Google Sheets API** and **Google Drive API**.
+2. Configure the OAuth consent screen and add your Google account as a test user when the app remains in testing.
+3. Create an OAuth client with application type **Desktop app**. Do not use a Web application client.
+4. In Lead Extractor, open **Data sources → Connections & API keys**.
+5. Save the Desktop client ID and secret, then select **Connect Google**.
+
+The app displays the exact loopback callback used by the current installation—normally:
+
+```text
+http://127.0.0.1:8788
+```
+
+Authorization uses PKCE, a short-lived state value, and the same callback during the token exchange. A `redirect_uri_mismatch` error normally means a Web client or a different loopback address was used; create and save a Desktop app client instead.
+
+Each organized collection can receive its own sanitized worksheet title. Optional live sync updates the current worksheet while results arrive, then performs a final sync after verification and organization.
+
+## Zoho outreach
+
+Zoho Mail integration uses OAuth and the official API. Client credentials and refresh tokens are stored in Windows Credential Manager.
+
+- Templates can be reused across niches.
+- Local AI can produce evidence-bounded drafts.
+- Support and automated addresses are excluded from campaign preparation.
+- Suppressions, prior outcomes, campaign limits, and randomized pacing are checked before delivery.
+- Sending requires explicit campaign approval.
+- Provider failures pause the campaign instead of silently skipping recipients.
+
+Users remain responsible for consent, lawful basis, identification, opt-out language, platform terms, and applicable marketing law.
+
+## Desktop interface
+
+The Electron application is borderless and resizable. Back, forward, refresh, thin/wide navigation, minimize, maximize, and close controls live inside the application interface.
+
+The workspace is organized into:
+
+- **Discover** — search settings, plan, linked workflow, and live results.
+- **History** — grouped runs with retained checkpoints and diagnostics.
+- **Research library** — completed collections and collapsible intelligence sections.
+- **Outreach** — Zoho connection, templates, drafts, campaigns, and outcomes.
+- **Data sources** — built-in source cards, optional credentials, Google OAuth setup, updates, and repair.
+- **Business registries** — reviewed official directories followed by offer-to-buyer planning.
 
 ## Install on Windows
 
 ### Installer
 
-Download the latest `Lead-Extractor-Setup-*.exe` from Releases and run it.
+Download `Lead-Extractor-Setup-*.exe` from GitHub Releases.
 
-The installer asks whether to enable Google Chrome integration. If enabled, the app may open a separate Chrome profile for public Maps research and manual source review. It never imports the normal Chrome profile, saved passwords, or cookies. The choice can still be changed for an individual search.
+The installer can enable Chrome integration. The app creates a separate persistent profile and never imports the normal Chrome profile. Saved research and browser state live in the Windows user-data directory, not the installation folder.
 
 Requirements:
 
 - Windows 10 or Windows 11
-- Python 3.10 or newer, with Python available on `PATH`
-- Google Chrome only if Chrome integration is desired
-- Ollama only if local AI features are desired
-
-On first launch, the app creates its private Python environment and installs the pinned runtime packages. This can take a few minutes. User databases and browser state are stored under the app’s Windows user-data directory, not in the installation folder.
+- Python 3.10 or newer on `PATH`
+- Google Chrome for Maps and browser-assisted review
+- Ollama only for optional local-AI features
 
 ### Run from source
 
@@ -95,7 +160,7 @@ npm install
 npm start
 ```
 
-The browser-only fallback is:
+Browser-only fallback:
 
 ```powershell
 .venv\Scripts\python.exe dashboard.py --port 8788
@@ -103,119 +168,79 @@ The browser-only fallback is:
 
 Then open `http://127.0.0.1:8788`.
 
-## Build the Windows installer
+## Build the installer
 
 ```powershell
 npm install
 npm run build:windows
 ```
 
-The signed-or-unsigned NSIS installer is written to `release/`. Public distribution should use code signing; an unsigned local build may trigger Windows SmartScreen.
+Electron Builder writes the NSIS installer and update metadata to `release/`. Public releases should be code-signed. Publish the installer and `latest.yml` together so installed builds can use the configured GitHub update channel.
 
-Future installed releases use the repository's GitHub release feed. Publish the generated installer and `latest.yml` together; the desktop app will never download an update from an arbitrary URL.
+## Local data and public repository boundary
 
-### Optional connections
+The following paths are ignored and must never be committed:
 
-Open **Data sources → Connections & API credentials**. Google Sheets uses a Google Cloud Desktop OAuth client and requests only `drive.file`. Apollo personal accounts use an API key; Apollo partner OAuth requires separate partner approval. Apify uses a bearer token, while Outscraper and Google Places use API keys. A credential is never included in lead exports, diagnostics, or browser responses.
+- `data/` — databases, tokens, task state, local intelligence memory, and browser metadata
+- `leads/` — CSV and JSON exports
+- `logs/` — diagnostics and execution logs
+- `release/`, `dist/`, `test-results/`, and browser reports
+- `.env*`, private keys, certificates, local virtual environments, and `node_modules/`
 
-## How the research engine reasons
+Credentials are stored through Windows Credential Manager. The browser never receives secret values back from the connection API.
 
-### 1. Research strategist
+Reusable source code, niche packs, search-method packs, directory metadata, schemas, and tests are intentionally versioned.
 
-Selects niche-relevant platforms and terminology. Directory suggestions are not silently promoted to confirmed business facts.
+## Privacy, security, and responsible use
 
-### 2. Search planner
-
-Builds distinct business, individual-provider, directory, location, and related-service queries within the chosen budget.
-
-### 3. Evidence analyst
-
-Separates first-party observations, directory claims, search snippets, and unresolved assumptions. Every retained claim keeps its source where available.
-
-### 4. Lead qualifier
-
-Classifies independent operators, chains/franchises, agencies, and unknown entities conservatively. Unknown does not mean independent.
-
-### 5. Quality controller
-
-Merges strong duplicate identities, flags possible duplicates, detects missing contacts, identifies weak sources, and preserves conflicting evidence for human review.
-
-## Contact and email quality
-
-Lead Extractor can identify published addresses and classify them as possible-direct, general-business, support, automated, or uncertain. Support and automated addresses are excluded from campaign preparation. DNS and MX checks describe the domain; they do not prove that a mailbox exists or accepts mail.
-
-The app never sends probe email. A published email is not proof of consent, ownership, or deliverability.
-
-## Zoho outreach
-
-Zoho integration uses OAuth and the official Zoho Mail API. Client credentials and refresh tokens are stored through Windows Credential Manager or supplied through environment variables. They are not written to exports, diagnostics, or the Git repository.
-
-Campaign behavior is intentionally conservative:
-
-- Explicit campaign approval is required before sending.
-- The default campaign limit is small and the daily cap is enforced.
-- Messages are paced individually with a bounded randomized delay.
-- Suppressions and prior outcomes are checked before delivery.
-- Provider errors pause the campaign rather than silently continuing.
-- AI drafts require usable saved evidence and remain unsent until approved.
-
-Users are responsible for consent, lawful basis, identification, opt-out language, platform terms, and the marketing laws that apply to their recipients.
-
-## Privacy and security
-
-- The HTTP service binds only to `127.0.0.1`.
-- Local Host and Origin checks protect browser requests.
-- Electron uses `contextIsolation`, renderer sandboxing, and no Node integration.
+- The backend binds only to `127.0.0.1`.
+- Host and Origin checks protect browser requests.
+- Electron uses renderer sandboxing, context isolation, and no renderer Node integration.
+- Ollama and Chrome debugging connections are loopback-only.
 - External links open outside the privileged application window.
-- Ollama access is loopback-only and redirects are rejected.
-- Chrome remote debugging is bound to loopback.
-- Databases, logs, exports, browser profiles, campaign records, credentials, and local research imports are ignored by Git.
-- Static files use a restrictive Content Security Policy.
+- The app does not bypass logins, CAPTCHAs, paywalls, robots directives, security checkpoints, rate limits, or access controls.
+- Collect only public professional information you have a legitimate reason to process.
+- Do not use the project for credential harvesting, account abuse, sensitive-person profiling, indiscriminate messaging, or unlawful outreach.
 
-This is a desktop application, not a multi-user web server. Do not proxy or expose port `8788` to another machine. See [SECURITY.md](SECURITY.md) for vulnerability reporting.
+This is a local desktop application, not a multi-user server. Never expose port `8788` to another machine. See [SECURITY.md](SECURITY.md).
 
-## Development and verification
+## Testing and release checks
 
-Run the backend test suite:
+Backend tests:
 
 ```powershell
 .venv\Scripts\python.exe -m unittest discover -s tests -v
 ```
 
-Run the browser workflow tests:
+Browser workflow tests:
 
 ```powershell
 npm run test:e2e
 ```
 
-Run the packaged desktop smoke test:
+Desktop smoke test:
 
 ```powershell
 npm run test:electron
 ```
 
-Dependency checks used for release review:
+Dependency and source checks:
 
 ```powershell
 npm audit
 .venv\Scripts\python.exe -m pip_audit -r requirements.txt
+.venv\Scripts\python.exe -m bandit -r . -x .venv,node_modules,release
 ```
 
-## Important limitations
+## Limitations
 
-- Coverage depends on the source, location, niche, indexing, and site availability.
-- A city in a query does not prove that a company serves that city.
-- Directory and search-result text can be stale or incorrect.
-- Social, hiring, review, and advertising signals require human confirmation.
-- Browser automation can encounter CAPTCHAs or security checkpoints; the app pauses for the user instead of bypassing them.
-- Website crawling is deliberately bounded and may miss content rendered behind complex interactions.
-- “Free” describes the software and its built-in source strategy; network providers may change policies or limits.
-
-The proposed multi-country directory, geography, Google Sheets, and LinkedIn-assisted expansion is documented in [Phase 2 roadmap](docs/PHASE_2_ROADMAP.md). It deliberately distinguishes open registries from paid/licensed records and uses Google OAuth rather than embedded keys.
-
-## Responsible use
-
-Collect only public professional information that you have a legitimate reason to process. Respect source terms, `robots.txt`, rate limits, privacy law, anti-spam law, and opt-out requests. Do not use this project for credential harvesting, account abuse, indiscriminate messaging, sensitive-person profiling, or bypassing access controls.
+- A result limit is a ceiling, not a guaranteed count.
+- Source coverage varies by niche, country, city, indexing, and provider availability.
+- A location in a query does not prove that a company serves that location.
+- Directory, social, hiring, review, and advertising claims can be stale and require human confirmation.
+- A public company LinkedIn URL does not identify the correct decision-maker.
+- Complex websites may expose no usable evidence even after rendering.
+- Network providers can change policies, schemas, quotas, and access requirements.
 
 ## License
 

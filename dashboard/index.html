@@ -531,7 +531,13 @@ Dallas, Texas</textarea>
             </p>
           </div>
         </div>
-        <div id="sourceCards" class="source-grid"></div>
+        <section class="workspace-section" aria-labelledby="builtInSourcesHeading">
+          <div class="section-heading">
+            <div><span class="eyebrow">AUTOMATIC WATERFALL</span><h2 id="builtInSourcesHeading">Built-in and local sources</h2></div>
+            <p>Available sources run only when relevant to the niche, country and selected workflow.</p>
+          </div>
+          <div id="sourceCards" class="source-grid"></div>
+        </section>
         <details id="connectionsPanel" class="card connections-panel">
           <summary>
             <span>
@@ -544,6 +550,7 @@ Dallas, Texas</textarea>
             <span id="connectionSummary" class="badge">0 connected</span>
           </summary>
           <div class="connections-panel-body">
+            <p class="section-intro">Connect only the services you use. Credentials stay in Windows Credential Manager and optional paid providers remain off until explicitly enabled.</p>
             <div id="connectionCards" class="connection-grid"></div>
             <p id="connectionStatus" class="fine-print" role="status"></p>
             <details class="source-catalog-details">
@@ -598,7 +605,7 @@ Dallas, Texas</textarea>
             leads, browser profile preferences and outreach settings.
           </p>
         </section>
-        <div class="notice">
+        <div class="notice source-attribution">
           OpenStreetMap data © OpenStreetMap contributors, ODbL. City lookup
           uses cached, rate-limited Nominatim requests.
           <a
@@ -654,7 +661,30 @@ Dallas, Texas</textarea>
           </div>
           <p id="registryNotice" class="fine-print" role="status"></p>
         </section>
-        <div id="registryCards" class="source-grid"></div>
+        <div id="registryCards" class="source-grid registry-results"></div>
+        <section class="card offer-prospect-panel" aria-labelledby="offerProspectHeading">
+          <div class="card-title">
+            <span class="step">AI</span>
+            <div>
+              <h2 id="offerProspectHeading">Offer-to-buyer automation</h2>
+              <p>Describe what you sell. The app prepares company discovery, contact enrichment and decision-maker review.</p>
+            </div>
+          </div>
+          <div class="offer-prospect-controls">
+            <label for="offerProduct">Product, service or target niche<input id="offerProduct" maxlength="120" placeholder="e.g. electronic signatures, payroll software, roofing" /></label>
+            <label for="offerCountry">Country<select id="offerCountry"><option value="US">United States</option><option value="SG">Singapore</option><option value="MY">Malaysia</option><option value="AU">Australia</option></select></label>
+            <button id="buildOfferPlan" class="primary" type="button">Find likely buyers</button>
+          </div>
+          <div class="offer-live-sheet">
+            <div class="check-row">
+              <input id="offerLiveSheets" type="checkbox" checked disabled />
+              <label for="offerLiveSheets">Live sync this run to Google Sheets<small>Creates a separate titled worksheet and refreshes it while leads arrive.</small></label>
+            </div>
+            <button id="offerGoogleConnect" class="secondary" type="button">Connect Google Sheets</button>
+            <p id="offerSheetStatus" class="fine-print" role="status">Checking Google authorization…</p>
+          </div>
+          <div id="offerPlan" class="offer-plan empty-state"><b>Ready for an offer</b><p>Describe what you sell to generate an evidence-aware buyer plan.</p></div>
+        </section>
       </section>
       <section id="libraryView" class="view hidden">
         <div class="page-heading">

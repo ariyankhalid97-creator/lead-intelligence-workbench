@@ -507,3 +507,198 @@ def wikidata_search(
         )
         leads.append(lead)
     return leads
+
+
+ACRA_DATASET_ID = "d_3f960c10fed6145404ca7b821f263b87"
+ACRA_DATASET_URL = f"https://data.gov.sg/datasets/{ACRA_DATASET_ID}/view"
+
+
+def acra_search(search_plan: dict, location: str, limit: int, emit=None) -> list[Lead]:
+    """Search Singapore's free official ACRA entity-name dataset.
+
+    ACRA verifies entity identity/status. It is not evidence of buyer intent.
+    """
+    if "singapore" not in str(location).casefold():
+        return []
+    phrases = search_plan.get("phrases") or []
+    niche = str(search_plan.get("category") or (phrases[0] if phrases else ""))
+    candidates = []
+    for phrase in [niche, *phrases]:
+        words = [
+            word
+            for word in re.findall(r"[A-Za-z]{4,}", str(phrase))
+            if word.casefold()
+            not in {"agency", "agencies", "company", "service", "services"}
+        ]
+        if words:
+            candidates.append(words[0])
+    queries = list(dict.fromkeys(candidates))[:3]
+    leads = []
+    seen = set()
+    per_query = min(max(int(limit), 1), 100)
+    for query in queries:
+        url = (
+            "https://data.gov.sg/api/action/datastore_search"
+            f"?resource_id={ACRA_DATASET_ID}&limit={per_query}&q={quote(query)}"
+        )
+        payload = json.loads(fetch(url, timeout=25, retries=1).decode("utf-8"))
+        records = payload.get("result", {}).get("records", [])
+        if emit:
+            emit(
+                "acra",
+                "info",
+                "Singapore ACRA registry responded",
+                query=query,
+                count=len(records),
+            )
+        for item in records:
+            uen = str(item.get("uen") or "").strip()
+            status = str(item.get("uen_status_desc") or "").strip()
+            name = str(item.get("entity_name") or "").strip()
+            if (
+                not uen
+                or not name
+                or status.casefold() not in {"registered", "live"}
+                or uen in seen
+            ):
+                continue
+            seen.add(uen)
+            address = " ".join(
+                value
+                for value in [
+                    str(item.get("reg_street_name") or "").strip(),
+                    str(item.get("reg_postal_code") or "").strip(),
+                ]
+                if value
+            )
+            lead = Lead(
+                name=name,
+                category=str(item.get("entity_type_desc") or "Registered entity"),
+                address=address,
+                city="Singapore",
+                search_location=location,
+                source="acra_registry",
+                source_id=uen,
+                source_url=ACRA_DATASET_URL,
+                sources="acra_registry",
+                discovery_query=query,
+                discovery_intent="official_registry_identity",
+                record_type="registered_business",
+                source_strength="official_registry",
+                location_evidence="registered_address",
+            )
+            add_observation(
+                lead,
+                "official_registry_record",
+                f"UEN {uen}; status {status}; {lead.category}; registered address {address or 'not published'}",
+                ACRA_DATASET_URL,
+                "Singapore Accounting and Corporate Regulatory Authority open dataset",
+            )
+            leads.append(lead)
+            if len(leads) >= max(1, int(limit)):
+                return leads
+    return leads
+
+
+def acra_secondary_enrichment(
+    leads: list[Lead], niche: str, location: str, limit: int, cancel=None, emit=None
+) -> list[Lead]:
+    """Resolve likely public websites for registry-only Singapore entities."""
+    if not leads:
+        return leads
+    from ddgs import DDGS
+    from discovery import is_directory, is_negative_media_domain
+
+    excluded = (
+        "data.gov.sg",
+        "acra.gov.sg",
+        "linkedin.com",
+        "facebook.com",
+        "instagram.com",
+        "yelp.com",
+        "yellowpages.com",
+    )
+    budget = min(len(leads), max(1, min(int(limit), 30)))
+    found = 0
+    failures = 0
+    for lead in leads[:budget]:
+        if cancel is not None and cancel.is_set():
+            break
+        query = f'"{lead.name}" "{niche}" Singapore'
+        try:
+            results = list(DDGS(timeout=10).text(query, max_results=6, backend="auto"))
+        except Exception as exc:
+            failures += 1
+            if emit:
+                emit(
+                    "acra_enrichment",
+                    "warning",
+                    "Targeted company website query failed; registry record retained",
+                    company=lead.name,
+                    query=query,
+                    error=str(exc)[:240],
+                )
+            continue
+        name_words = {
+            word
+            for word in re.findall(r"[a-z0-9]+", lead.name.casefold())
+            if len(word) > 2
+            and word not in {"the", "pte", "ltd", "limited", "llp", "company"}
+        }
+        candidates = []
+        for result in results:
+            url = str(result.get("href") or "")
+            host = (urlparse(url).hostname or "").casefold().removeprefix("www.")
+            if not host or any(
+                host == item or host.endswith("." + item) for item in excluded
+            ):
+                continue
+            if is_directory(url) or is_negative_media_domain(url):
+                continue
+            haystack = " ".join(
+                (str(result.get("title") or ""), str(result.get("body") or ""), host)
+            ).casefold()
+            overlap = sum(word in haystack for word in name_words)
+            if name_words and overlap < max(1, min(2, len(name_words))):
+                continue
+            candidates.append((overlap, url, result))
+        if not candidates:
+            continue
+        _, website, result = sorted(candidates, key=lambda row: -row[0])[0]
+        lead.website = website
+        add_observation(
+            lead,
+            "secondary_web_discovery",
+            " ".join(
+                filter(
+                    None,
+                    (
+                        normalize_business_name(result.get("title", ""), "Singapore"),
+                        str(result.get("body") or "")[:500],
+                    ),
+                )
+            ),
+            website,
+            "ACRA exact-company web waterfall",
+        )
+        found += 1
+        if emit:
+            emit(
+                "acra_enrichment",
+                "info",
+                "Likely company website found for registered entity",
+                company=lead.name,
+                query=query,
+                website=website,
+            )
+        time.sleep(0.15)
+    if emit:
+        emit(
+            "acra_enrichment",
+            "info",
+            "ACRA secondary website waterfall complete",
+            attempted=budget,
+            websites_found=found,
+            query_failures=failures,
+        )
+    return leads

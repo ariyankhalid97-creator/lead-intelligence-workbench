@@ -73,7 +73,7 @@ function connectionBadge(item) {
   if (item.configured) return "saved · test needed";
   return "not connected";
 }
-function connectionCard(item) {
+function connectionCard(item, googleRedirectUri = "") {
   const status = connectionBadge(item);
   if (item.id === "google_sheets") {
     return `<article class="connection-card ${item.connected ? "is-connected" : ""}" data-provider="${item.id}">
@@ -87,7 +87,14 @@ function connectionCard(item) {
         <button class="secondary" type="button" data-connection-action="sheet-sync" ${item.connected ? "" : "disabled"}>Sync research library</button>
         <button class="ghost" type="button" data-connection-action="disconnect">Disconnect</button></div>
       </form>
-      <p class="fine-print">Enable the Google Sheets API, then use a Google Cloud <b>Desktop app</b> OAuth client. Access is limited to files this app creates or opens. ${item.spreadsheet_id ? "A research spreadsheet is linked." : ""}</p>
+      <div class="oauth-setup">
+        <b>Required Google setup</b>
+        <ol><li>Enable the Google Sheets API and Google Drive API.</li><li>Create an OAuth client with application type <b>Desktop app</b>—not Web application.</li><li>Save that client here, then choose Connect Google.</li></ol>
+        <label>Exact loopback callback used by this installation
+          <span class="copy-field"><code>${escapeHtml(googleRedirectUri || "http://127.0.0.1:8788")}</code><button class="ghost small" type="button" data-copy-value="${escapeHtml(googleRedirectUri || "http://127.0.0.1:8788")}">Copy</button></span>
+        </label>
+      </div>
+      <p class="fine-print"><b>An API key cannot write to a private spreadsheet.</b> The app uses PKCE and the limited <code>drive.file</code> scope. If Google reports <code>redirect_uri_mismatch</code>, replace a Web client with a Desktop app client. ${item.spreadsheet_id ? "A research spreadsheet is linked." : ""}</p>
     </article>`;
   }
   const automaticNote = item.automatic
@@ -113,7 +120,7 @@ async function loadConnections() {
     $("connectionSummary").textContent =
       `${connected} of ${data.providers.length} connected`;
     $("connectionCards").innerHTML = data.providers
-      .map(connectionCard)
+      .map((item) => connectionCard(item, data.google_redirect_uri || ""))
       .join("");
     $("sourceCatalog").innerHTML = catalog.sources
       .map(
@@ -147,6 +154,7 @@ function pollGoogleConnection(popup) {
         clearInterval(connectionPollTimer);
         connectionPollTimer = null;
         await loadConnections();
+        await loadOfferSheetStatus();
         if (google?.connected) toast("Google Sheets connected.");
       }
     } catch {}
@@ -215,7 +223,8 @@ let aiConnection = null,
   aiTeachingTimer = null,
   detailContext = null;
 const aiReviewMessages = new Map();
-const active = (s) => ["queued", "running", "waiting"].includes(s);
+const active = (s) =>
+  ["queued", "running", "waiting", "pause_requested", "paused"].includes(s);
 async function api(path, options) {
   const response = await fetch(path, options);
   const data = await response.json();
@@ -266,7 +275,10 @@ async function loadAiStatus() {
             const size = model.parameter_size
               ? ` · ${model.parameter_size}`
               : "";
-            return `<option value="${escapeHtml(name)}">${escapeHtml(name + size)}</option>`;
+            const role = Array.isArray(model.recommended_for) && model.recommended_for.length
+              ? ` · best for ${model.recommended_for[0]}`
+              : "";
+            return `<option value="${escapeHtml(name)}">${escapeHtml(name + size + role)}</option>`;
           })
           .join("")
       : '<option value="">No model available</option>';
@@ -719,7 +731,10 @@ function route() {
   if (view === "library") loadLibrary();
   if (view === "outreach") loadOutreach();
   if (view === "sources") loadConnections();
-  if (view === "registries") loadRegistries();
+  if (view === "registries") {
+    loadRegistries();
+    loadOfferSheetStatus();
+  }
   if (hash === "results")
     $("resultSection").scrollIntoView({ behavior: "smooth" });
   if (hash === "diagnostics") {
@@ -768,6 +783,117 @@ async function loadRegistries(force = false) {
 $("registrySearch").addEventListener("click", () => loadRegistries(true));
 $("registryQuery").addEventListener("keydown", (event) => {
   if (event.key === "Enter") loadRegistries(true);
+});
+let currentOfferPlan = null;
+let offerGoogleState = null;
+async function loadOfferSheetStatus() {
+  if (!$("offerSheetStatus")) return;
+  try {
+    const data = await api("/api/connections");
+    offerGoogleState =
+      data.providers.find((item) => item.id === "google_sheets") || {};
+    const connected = Boolean(offerGoogleState.connected);
+    $("offerLiveSheets").disabled = !connected;
+    $("offerGoogleConnect").textContent = connected
+      ? "Google Sheets connected"
+      : offerGoogleState.configured
+        ? "Authorize Google account"
+        : "Set up Google Sheets";
+    $("offerGoogleConnect").disabled = connected;
+    $("offerSheetStatus").textContent = connected
+      ? "Live sync is ready. The sheet stays private to the authorized Google account unless you share it in Google Sheets."
+      : offerGoogleState.configured
+        ? "The Sheets API project is saved, but Google account authorization is incomplete. An API key alone cannot write to a private sheet."
+        : "Add a Google Desktop OAuth client once. An API key alone cannot create or edit a private sheet.";
+  } catch (error) {
+    $("offerSheetStatus").textContent =
+      `Google Sheets status unavailable: ${error.message}`;
+  }
+}
+async function buildOfferPlan(segment = "") {
+  const params = new URLSearchParams({
+    offer: $("offerProduct").value,
+    country: $("offerCountry").value,
+    segment,
+  });
+  const box = $("offerPlan");
+  box.innerHTML = "<p>Building a buyer plan…</p>";
+  try {
+    currentOfferPlan = await api(`/api/personal/offer-plan?${params}`);
+    const p = currentOfferPlan;
+    box.className = "offer-plan";
+    box.innerHTML = `<div class="offer-plan-heading"><div><span class="badge">${escapeHtml(p.country_name)}</span><h3>${escapeHtml(p.offer)} buyer plan</h3><p>${escapeHtml(p.summary)}</p></div><button id="runOfferPlan" class="primary" type="button">Start complete search →</button></div><p class="notice"><b>Country fit:</b> ${escapeHtml(p.country_fit_note)}</p><p><b>Selected buyer segment:</b> ${escapeHtml(p.label || p.selected_segment)}</p><div class="offer-segments">${p.segments.map((item) => `<button class="offer-segment ${item.niche === p.selected_segment ? "selected" : ""}" type="button" data-segment="${escapeHtml(item.niche)}"><b>${escapeHtml(item.label || item.niche)}</b><small>${escapeHtml(item.reason)}</small></button>`).join("")}</div><details open><summary>Company types and workflows</summary><div class="offer-plan-columns"><div><b>Company types to discover</b><ul>${p.subsegments.map((x) => `<li>${escapeHtml(x)}</li>`).join("")}</ul></div><div><b>Potential document workflows</b><ul>${p.documents.map((x) => `<li>${escapeHtml(x)}</li>`).join("")}</ul></div></div></details><details><summary>Decision-makers and fit evidence</summary><div class="offer-plan-columns"><div><b>Likely roles</b><ul>${p.decision_roles.map((x) => `<li>${escapeHtml(x)}</li>`).join("")}</ul></div><div><b>Evidence to confirm</b><ul>${p.fit_signals.map((x) => `<li>${escapeHtml(x)}</li>`).join("")}</ul></div></div></details><details><summary>Discovery approaches</summary><ol>${p.search_approaches.map((x) => `<li>${escapeHtml(x)}</li>`).join("")}</ol></details><details><summary>Research boundary and method</summary><p><b>Boundary:</b> ${escapeHtml(p.legal_boundary)}</p><p><b>Exclude:</b> ${escapeHtml(p.exclusions.join(" · "))}</p><small>${escapeHtml(p.method)}</small></details>`;
+    box.querySelectorAll(".offer-segment").forEach((button) =>
+      button.addEventListener("click", () => buildOfferPlan(button.dataset.segment)),
+    );
+    $("runOfferPlan").addEventListener("click", runOfferPlan);
+  } catch (error) {
+    box.className = "offer-plan empty-state";
+    box.innerHTML = `<b>Could not build the plan</b><p>${escapeHtml(error.message)}</p>`;
+  }
+}
+async function runOfferPlan() {
+  const p = currentOfferPlan;
+  if (!p) return;
+  if ($("offerLiveSheets").checked && !offerGoogleState?.connected) {
+    $("offerSheetStatus").textContent =
+      "Authorize your Google account first, or turn off live sync and run without Sheets.";
+    return;
+  }
+  const button = $("runOfferPlan");
+  button.disabled = true;
+  button.textContent = "Saving intelligence packs…";
+  try {
+    await api("/api/personal/offer-activate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ offer: p.offer }),
+    });
+  } catch (error) {
+    button.disabled = false;
+    button.textContent = "Start complete search →";
+    const box = $("offerPlan");
+    box.insertAdjacentHTML("beforeend", `<p class="notice">Could not save the researched intelligence pack: ${escapeHtml(error.message)}</p>`);
+    return;
+  }
+  $("niche").value = p.selected_segment;
+  $("location").value = p.locations.join("\n");
+  $("country").value = p.country;
+  $("coverage").value = "exact";
+  $("source").value = "hybrid";
+  $("target").value = "businesses";
+  $("depth").value = "deep";
+  $("queryBudget").value = "40";
+  $("limit").value = "100";
+  $("phrases").value = p.phrases.slice(0, 10).join("\n");
+  $("browser").checked = true;
+  $("enrich").checked = true;
+  $("linkedWorkflow").checked = true;
+  location.hash = "#discover";
+  updatePlan();
+  $("searchForm").requestSubmit();
+}
+$("buildOfferPlan").addEventListener("click", () => buildOfferPlan());
+$("offerGoogleConnect").addEventListener("click", async () => {
+  await loadOfferSheetStatus();
+  if (offerGoogleState?.connected) return;
+  if (!offerGoogleState?.configured) {
+    location.hash = "#sources";
+    $("connectionsPanel").open = true;
+    $("connectionsPanel").scrollIntoView({ behavior: "smooth" });
+    return;
+  }
+  const popup = window.open(
+    "/api/connections/google/connect",
+    "google-sheets-connect",
+    "popup,width=620,height=760",
+  );
+  pollGoogleConnection(popup);
+  $("offerSheetStatus").textContent =
+    "Complete Google approval in the popup. This panel will update automatically.";
+});
+$("offerProduct").addEventListener("keydown", (event) => {
+  if (event.key === "Enter") buildOfferPlan();
 });
 window.addEventListener("hashchange", route);
 async function updatePlan() {
@@ -935,6 +1061,17 @@ $("searchForm").addEventListener("submit", async (event) => {
         query_budget: Number($("queryBudget").value),
         prefer_independent: $("preferIndependent").checked,
         research_profile: $("researchProfile").value,
+        offer_title:
+          currentOfferPlan?.selected_segment === $("niche").value
+            ? currentOfferPlan.offer
+            : "",
+        offer_segment_label:
+          currentOfferPlan?.selected_segment === $("niche").value
+            ? currentOfferPlan.label
+            : "",
+        live_sheet_sync:
+          currentOfferPlan?.selected_segment === $("niche").value &&
+          $("offerLiveSheets").checked,
         reference_ids: preparedReferenceIds,
       }),
     });
@@ -1066,8 +1203,21 @@ function renderJob() {
   rows = job.rows || [];
   $("runButton").disabled = active(job.status);
   $("liveStatus").textContent = job.message;
+  const canPause = ["queued", "running", "waiting"].includes(job.status);
+  const canResume = [
+    "pause_requested",
+    "paused",
+    "interrupted",
+    "failed",
+    "cancelled",
+  ].includes(job.status);
+  const canStop = active(job.status);
+  const controls = `${canPause ? '<button class="secondary" id="pauseSearch">Pause</button>' : ""}${canResume ? '<button class="primary" id="resumeSearch">Continue</button>' : ""}${canStop ? '<button class="danger" id="cancelSearch">Stop search</button>' : ""}`;
+  const interruption = job.interruption
+    ? `<p class="notice"><b>Interrupted:</b> ${escapeHtml(String(job.interruption.reason || "unknown").replaceAll("_", " "))} · previous state ${escapeHtml(job.interruption.previous_status || "unknown")}. Collected results and completed-location checkpoints were retained.</p>`
+    : "";
   $("runCard").innerHTML =
-    `<div class="run-heading"><div><span class="eyebrow">${escapeHtml(job.status.toUpperCase())}</span><h2>${escapeHtml(job.message)}</h2></div>${active(job.status) ? '<button class="danger" id="cancelSearch">Stop search</button>' : ""}</div><progress value="${job.progress || 0}" max="100" aria-label="Search progress"></progress><div class="run-status">${rows.length} collected · ${Math.round(job.elapsed || 0)} seconds elapsed · Results save automatically</div><p>${escapeHtml(job.status === "waiting" ? "Check the dedicated Chrome window. The search is waiting for your action." : job.diagnosis || "Inspect the business list or open diagnostics for source-by-source progress.")}</p><div class="chips">${Object.entries(
+    `<div class="run-heading"><div><span class="eyebrow">${escapeHtml(job.status.toUpperCase().replaceAll("_", " "))}</span><h2>${escapeHtml(job.message)}</h2></div><div class="actions">${controls}</div></div><progress value="${job.progress || 0}" max="100" aria-label="Search progress"></progress><div class="run-status">${rows.length} collected · ${Math.round(job.elapsed || 0)} seconds elapsed · Results save automatically</div>${interruption}<p>${escapeHtml(job.status === "waiting" ? "Check the dedicated Chrome window. The search is waiting for your action." : job.status === "paused" || job.status === "pause_requested" ? "The run is safely paused. Continue uses this same saved research record." : job.diagnosis || "Inspect the business list or open diagnostics for source-by-source progress.")}</p><div class="chips">${Object.entries(
       job.providers || {},
     )
       .map(
@@ -1075,6 +1225,48 @@ function renderJob() {
           `<span class="chip">${escapeHtml(name)} · ${escapeHtml(p.status)} · ${p.count || 0}</span>`,
       )
       .join("")}</div>`;
+  $("pauseSearch")?.addEventListener("click", async () => {
+    $("pauseSearch").disabled = true;
+    await api(`/api/jobs/${job.id}/pause`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    });
+    $("pauseSearch").textContent = "Pausing…";
+  });
+  $("resumeSearch")?.addEventListener("click", async () => {
+    $("resumeSearch").disabled = true;
+    $("resumeSearch").textContent = "Continuing…";
+    try {
+      await api(`/api/jobs/${job.id}/resume`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "{}",
+      });
+      const previousWorkflow = await api(
+        `/api/workflows/current?job_id=${encodeURIComponent(job.id)}`,
+      ).catch(() => ({}));
+      if (previousWorkflow.id) {
+        const linked = await api("/api/workflows", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            job_id: job.id,
+            model: $("aiModel").value || "",
+          }),
+        });
+        workflowId = linked.id;
+        localStorage.setItem("leadfinder.workflowTask", workflowId);
+        pollWorkflow(workflowId);
+      }
+      clearTimeout(pollTimer);
+      await poll();
+    } catch (error) {
+      $("formError").textContent = error.message;
+      $("resumeSearch").disabled = false;
+      $("resumeSearch").textContent = "Continue";
+    }
+  });
   $("cancelSearch")?.addEventListener("click", async () => {
     await api(`/api/jobs/${job.id}/cancel`, {
       method: "POST",
@@ -1302,6 +1494,7 @@ function details(r, context = {}) {
         `<div><strong>${name}</strong>${escapeHtml(value) || "—"}</div>`,
     )
     .join("")}</div>`;
+  const linkedinDecisionQuery = `https://www.linkedin.com/search/results/people/?keywords=${encodeURIComponent([r.name, r.decision_maker_role || "operations director OR owner"].filter(Boolean).join(" "))}`;
   const contactBody = `<div class="detail-grid">${[
     ["Primary email", r.email],
     ["Primary phone", r.phone],
@@ -1323,7 +1516,7 @@ function details(r, context = {}) {
   ]
     .filter(Boolean)
     .map((x) => link(x))
-    .join("")}</div>${emailQualityBadge(r)}`;
+    .join("")}${link(linkedinDecisionQuery, "Search likely decision-makers on LinkedIn ↗")}</div>${emailQualityBadge(r)}<p class="fine-print">LinkedIn opens for manual review in your signed-in browser. The app does not scrape authenticated profiles.</p>`;
   const sourceBody = `<div class="intel-link-grid">${link(r.source_url, "Open primary public source ↗")}${link(r.website, "Open business website ↗")}</div>${evidence.length ? evidence.map((e) => `<div class="evidence"><b>${escapeHtml(e.field)}: ${escapeHtml(e.value)}</b><small>${escapeHtml(e.method)} · ${escapeHtml(e.observed_at)}</small>${link(e.url)}</div>`).join("") : "<p>No website evidence recorded. Listing contacts can be checked at the public source link above.</p>"}`;
   $("detailBody").innerHTML =
     `${snapshot}${intelligenceSection("Contact intelligence", "Published phone, email, decision-maker and profiles", contactBody, true, r.email ? "Email found" : "Needs contact")}${intelligenceSection("Contact evidence", `${evidence.length} retained source claim${evidence.length === 1 ? "" : "s"}`, sourceBody)}`;
@@ -2145,7 +2338,7 @@ async function loadHistory() {
           const locations = Array.from(
             new Set(group.runs.map((r) => r.params?.location).filter(Boolean)),
           );
-          return `<details class="history-group" data-group="${escapeHtml(key)}" ${openHistoryGroups.has(key) ? "open" : ""}><summary><span class="history-group-title">${escapeHtml(group.name)}</span><span class="history-group-meta">${group.runs.length} saved ${group.runs.length === 1 ? "run" : "runs"} · ${total} results across runs</span><span class="history-group-places">${escapeHtml(locations.slice(0, 3).join(" · "))}${locations.length > 3 ? ` · +${locations.length - 3} more` : ""}</span></summary><div class="history-runs">${group.runs.map((j) => `<article class="history-item" data-history-id="${escapeHtml(j.id)}"><div class="history-run-heading"><div><h2>${escapeHtml(j.params?.location || "Location not recorded")}</h2><p>${escapeHtml(new Date(j.created_at).toLocaleString())} · ${escapeHtml((j.params?.source || "source not recorded").replaceAll("_", " "))}</p><span class="badge">${escapeHtml(j.status)} · ${Number(j.count) || 0} businesses</span></div><button class="secondary history-open" data-id="${escapeHtml(j.id)}">Open search →</button></div><div class="history-preview" data-preview-id="${escapeHtml(j.id)}" aria-live="polite"><p>Expand this research group to see what was scraped.</p></div></article>`).join("")}<p class="fine-print">Results across runs can overlap. Each saved run and its original evidence stay separate.</p></div></details>`;
+          return `<details class="history-group" data-group="${escapeHtml(key)}" ${openHistoryGroups.has(key) ? "open" : ""}><summary><span class="history-group-title">${escapeHtml(group.name)}</span><span class="history-group-meta">${group.runs.length} saved ${group.runs.length === 1 ? "run" : "runs"} · ${total} results across runs</span><span class="history-group-places">${escapeHtml(locations.slice(0, 3).join(" · "))}${locations.length > 3 ? ` · +${locations.length - 3} more` : ""}</span></summary><div class="history-runs">${group.runs.map((j) => `<article class="history-item" data-history-id="${escapeHtml(j.id)}"><div class="history-run-heading"><div><h2>${escapeHtml(j.params?.location || "Location not recorded")}</h2><p>${escapeHtml(new Date(j.created_at).toLocaleString())} · ${escapeHtml((j.params?.source || "source not recorded").replaceAll("_", " "))}</p><span class="badge ${["paused", "pause_requested", "interrupted"].includes(j.status) ? "candidate" : ""}">${escapeHtml(j.status.replaceAll("_", " "))} · ${Number(j.count) || 0} businesses</span>${["paused", "pause_requested", "interrupted"].includes(j.status) ? `<p class="notice">${escapeHtml(j.message || "This run can be continued from its saved checkpoint.")}</p>` : ""}</div><button class="secondary history-open" data-id="${escapeHtml(j.id)}">${["paused", "pause_requested", "interrupted"].includes(j.status) ? "Open & continue →" : "Open search →"}</button></div><div class="history-preview" data-preview-id="${escapeHtml(j.id)}" aria-live="polite"><p>Expand this research group to see what was scraped.</p></div></article>`).join("")}<p class="fine-print">Results across runs can overlap. Each saved run and its original evidence stay separate.</p></div></details>`;
         }).join("")
       : '<div class="card search-card"><h2>No searches yet.</h2><p>Your first search will appear here automatically.</p></div>';
     $("historyList")
@@ -3504,6 +3697,18 @@ $("connectionCards").addEventListener("submit", async (event) => {
   }
 });
 $("connectionCards").addEventListener("click", async (event) => {
+  const copyButton = event.target.closest("[data-copy-value]");
+  if (copyButton) {
+    try {
+      await navigator.clipboard.writeText(copyButton.dataset.copyValue || "");
+      copyButton.textContent = "Copied";
+      setTimeout(() => (copyButton.textContent = "Copy"), 1400);
+    } catch {
+      $("connectionStatus").textContent =
+        "Copy was unavailable. Select the callback address manually.";
+    }
+    return;
+  }
   const button = event.target.closest("[data-connection-action]");
   if (!button || button.matches('input[type="checkbox"]')) return;
   const card = button.closest("[data-provider]");
@@ -3540,7 +3745,7 @@ $("connectionCards").addEventListener("click", async (event) => {
       const result = await connectionPost("/api/connections/google/sync", {});
       await loadConnections();
       $("connectionStatus").innerHTML =
-        `${result.rows} organized leads synchronized. ${link(result.url, "Open Google Sheet ↗")}`;
+        `${result.rows} organized leads synchronized across ${result.worksheets?.length || 1} titled worksheet${result.worksheets?.length === 1 ? "" : "s"}. ${link(result.url, "Open Google Sheet ↗")}`;
       toast("Research library synchronized to Google Sheets.");
       return;
     } else if (action === "disconnect") {

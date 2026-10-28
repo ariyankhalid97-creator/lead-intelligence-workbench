@@ -1,5 +1,32 @@
 # Changelog
 
+## 2.5.0 — 2026-10-28
+
+### Connected workflow and recovery
+
+- Link planning, discovery, enrichment, verification, compilation, research-library storage, Sheets synchronization and approval-gated outreach into one visible workflow.
+- Add durable pause, continue and interrupted-run recovery with explicit checkpoint and provider diagnostics.
+- Resolve public company LinkedIn URLs through an exact-name browser query while keeping people-profile research manual.
+
+### Google Sheets and OAuth
+
+- Switch Google authorization to the installed-app flow with loopback redirects, state validation, PKCE and the narrow `drive.file` scope.
+- Show the exact OAuth callback in Connections, explain the required Desktop app client type and provide a copy control.
+- Add titled worksheet creation and optional live updates for organized research collections.
+
+### Local intelligence and extraction
+
+- Route compatible installed Ollama models between fast planning and deeper evidence analysis, with a deterministic fallback when no model is available.
+- Add compact, source-linked Markdown extraction for bounded public business pages and retain exact failure evidence.
+- Improve name normalization, entity-boundary checks, duplicate consolidation, email quality classification and secondary NPI enrichment.
+
+### Interface, sources and privacy
+
+- Reorganize data sources, connections, business registries and intelligence cards into readable, responsive sections with collapsed detail groups.
+- Expand reusable niche terminology and country-aware official-directory metadata for the United States, Singapore, Malaysia and Australia.
+- Keep credentials, local searches, leads, logs and generated research out of the public repository while retaining reusable niche and directory knowledge.
+- Remove private campaign branding from the distributable code and documentation.
+
 ## 2.4.2 — 2026-10-28
 
 ### Search-method packs

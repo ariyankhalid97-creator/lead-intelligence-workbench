@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import json
 import re
 import secrets
@@ -15,7 +17,7 @@ import keyring
 
 KEYRING_SERVICE = "LeadExtractor-Optional-Connections-v1"
 GOOGLE_SCOPE = "https://www.googleapis.com/auth/drive.file"
-OAUTH_STATES: dict[str, float] = {}
+OAUTH_STATES: dict[str, dict] = {}
 PROVIDERS = {
     "google_sheets": {
         "name": "Google Sheets",
@@ -308,8 +310,18 @@ def google_authorize_url(callback: str) -> str:
     config = _read("google_sheets")
     if not config.get("client_id") or not config.get("client_secret"):
         raise ValueError("Save the Google desktop OAuth client first")
+    if not re.fullmatch(r"http://127\.0\.0\.1:\d{4,5}", callback):
+        raise ValueError("Google OAuth requires this app's loopback callback")
     state = secrets.token_urlsafe(24)
-    OAUTH_STATES[state] = time.time()
+    verifier = secrets.token_urlsafe(64)[:128]
+    challenge = base64.urlsafe_b64encode(
+        hashlib.sha256(verifier.encode("ascii")).digest()
+    ).rstrip(b"=").decode("ascii")
+    OAUTH_STATES[state] = {
+        "created_at": time.time(),
+        "callback": callback,
+        "code_verifier": verifier,
+    }
     return "https://accounts.google.com/o/oauth2/v2/auth?" + urlencode(
         {
             "client_id": config["client_id"],
@@ -320,13 +332,19 @@ def google_authorize_url(callback: str) -> str:
             "prompt": "consent",
             "include_granted_scopes": "true",
             "state": state,
+            "code_challenge": challenge,
+            "code_challenge_method": "S256",
         }
     )
 
 
 def google_callback(code: str, state: str, callback: str) -> None:
-    created = OAUTH_STATES.pop(state, None)
-    if not created or time.time() - created > 600:
+    request_state = OAUTH_STATES.pop(state, None)
+    if (
+        not isinstance(request_state, dict)
+        or time.time() - float(request_state.get("created_at", 0)) > 600
+        or request_state.get("callback") != callback
+    ):
         raise ValueError("Google connection request expired; start again")
     config = _read("google_sheets")
     token_body = urlencode(
@@ -336,6 +354,7 @@ def google_callback(code: str, state: str, callback: str) -> None:
             "client_secret": config.get("client_secret", ""),
             "redirect_uri": callback,
             "grant_type": "authorization_code",
+            "code_verifier": request_state.get("code_verifier", ""),
         }
     ).encode()
     request = Request(
@@ -418,27 +437,24 @@ SHEET_COLUMNS = (
 )
 
 
-def _sheet_rows(snapshot: dict) -> list[list[str]]:
-    records = []
-    for row in snapshot.get("records", []):
-        if isinstance(row, dict):
-            records.append({"collection": "Historical research", **row})
-    for collection in snapshot.get("collections", []):
-        if not isinstance(collection, dict):
-            continue
-        for row in collection.get("rows", []):
-            if isinstance(row, dict):
-                records.append(
-                    {
-                        "collection": collection.get("title", "Compiled research"),
-                        "niche": collection.get("niche", ""),
-                        "updated_at": collection.get("updated_at", ""),
-                        **row,
-                    }
-                )
+def _safe_sheet_title(value: str, used: set[str]) -> str:
+    base = re.sub(r"[\\/:?*\[\]]+", " - ", str(value or "")).strip(" ' -")
+    base = re.sub(r"\s+", " ", base)[:100] or "Leads"
+    candidate = base
+    number = 2
+    while candidate.casefold() in used:
+        suffix = f" ({number})"
+        candidate = base[: 100 - len(suffix)].rstrip() + suffix
+        number += 1
+    used.add(candidate.casefold())
+    return candidate
+
+
+def _rows_for_sheet(records: list[dict], collection: str, niche: str = "", updated_at: str = "") -> list[list[str]]:
     values = [list(SHEET_COLUMNS)]
     seen = set()
     for row in records[:10000]:
+        row = {"collection": collection, "niche": niche, "updated_at": updated_at, **row}
         signature = (
             str(row.get("website", "")).casefold().rstrip("/"),
             str(row.get("name", "")).casefold(),
@@ -456,18 +472,80 @@ def _sheet_rows(snapshot: dict) -> list[list[str]]:
     return values
 
 
+def _sheet_tabs(snapshot: dict) -> list[tuple[str, list[list[str]]]]:
+    used: set[str] = set()
+    tabs = []
+    historical = [row for row in snapshot.get("records", []) if isinstance(row, dict)]
+    if historical:
+        title = _safe_sheet_title("Historical research", used)
+        tabs.append((title, _rows_for_sheet(historical, title)))
+    for collection in snapshot.get("collections", [])[:90]:
+        if not isinstance(collection, dict):
+            continue
+        rows = [row for row in collection.get("rows", []) if isinstance(row, dict)]
+        raw_title = collection.get("sheet_title") or collection.get("title") or "Compiled research"
+        title = _safe_sheet_title(raw_title, used)
+        tabs.append(
+            (
+                title,
+                _rows_for_sheet(
+                    rows,
+                    str(collection.get("title") or title),
+                    str(collection.get("niche") or ""),
+                    str(collection.get("updated_at") or ""),
+                ),
+            )
+        )
+    return tabs or [("Leads", [list(SHEET_COLUMNS)])]
+
+
+def _sheet_rows(snapshot: dict) -> list[list[str]]:
+    """Compatibility helper returning all generated worksheet rows flattened."""
+    tabs = _sheet_tabs(snapshot)
+    return [list(SHEET_COLUMNS), *[row for _, values in tabs for row in values[1:]]]
+
+
+def job_sheet_snapshot(job: dict) -> dict:
+    """Build a one-worksheet snapshot for a running offer search."""
+    params = job.get("params") if isinstance(job.get("params"), dict) else {}
+    offer = str(params.get("offer_title") or "").strip()
+    segment = str(params.get("offer_segment_label") or params.get("niche") or "Leads").strip()
+    title = " - ".join(part for part in (offer, segment) if part) or segment
+    rows = [row for row in job.get("rows", []) if isinstance(row, dict)]
+    return {
+        "records": [],
+        "collections": [
+            {
+                "title": title,
+                "sheet_title": title,
+                "niche": params.get("niche", ""),
+                "updated_at": job.get("updated_at", ""),
+                "rows": rows,
+            }
+        ],
+    }
+
+
+def sync_job_sheet(job: dict) -> dict:
+    if not isinstance(job, dict):
+        raise ValueError("Choose a valid running research job")
+    return sync_sheet(job_sheet_snapshot(job))
+
+
 def sync_sheet(snapshot: dict) -> dict:
     token = _google_access_token()
     config = _read("google_sheets")
     headers = {"Authorization": f"Bearer {token}"}
     spreadsheet_id = str(config.get("spreadsheet_id") or "")
+    tabs = _sheet_tabs(snapshot)
+    created_now = False
     if not spreadsheet_id:
         created = _json_request(
             "https://sheets.googleapis.com/v4/spreadsheets",
             headers=headers,
             data={
                 "properties": {"title": "Lead Extractor Research Library"},
-                "sheets": [{"properties": {"title": "Leads"}}],
+                "sheets": [{"properties": {"title": title}} for title, _ in tabs],
             },
         )
         spreadsheet_id = str(created.get("spreadsheetId") or "")
@@ -475,22 +553,48 @@ def sync_sheet(snapshot: dict) -> dict:
             raise ValueError("Google Sheets did not return a spreadsheet ID")
         config["spreadsheet_id"] = spreadsheet_id
         _write("google_sheets", config)
-    values = _sheet_rows(snapshot)
-    encoded_range = quote("Leads!A1", safe="!")
-    _json_request(
-        f"https://sheets.googleapis.com/v4/spreadsheets/{spreadsheet_id}/values/Leads!A:Z:clear",
-        headers=headers,
-        data={},
-    )
-    result = _json_request(
-        f"https://sheets.googleapis.com/v4/spreadsheets/{spreadsheet_id}/values/{encoded_range}?valueInputOption=RAW",
-        headers=headers,
-        data={"range": "Leads!A1", "majorDimension": "ROWS", "values": values},
-        method="PUT",
-    )
+        created_now = True
+    if not created_now:
+        metadata = _json_request(
+            f"https://sheets.googleapis.com/v4/spreadsheets/{spreadsheet_id}?fields=sheets.properties",
+            headers=headers,
+        )
+        existing = {
+            str(item.get("properties", {}).get("title") or "").casefold()
+            for item in metadata.get("sheets", [])
+            if isinstance(item, dict)
+        }
+        missing = [title for title, _ in tabs if title.casefold() not in existing]
+        if missing:
+            _json_request(
+                f"https://sheets.googleapis.com/v4/spreadsheets/{spreadsheet_id}:batchUpdate",
+                headers=headers,
+                data={"requests": [{"addSheet": {"properties": {"title": title}}} for title in missing]},
+            )
+    total_rows = 0
+    updated_cells = 0
+    for title, values in tabs:
+        quoted_title = title.replace("'", "''")
+        a1 = f"'{quoted_title}'!A1"
+        clear_range = quote(f"'{quoted_title}'!A:Z", safe="")
+        encoded_range = quote(a1, safe="")
+        _json_request(
+            f"https://sheets.googleapis.com/v4/spreadsheets/{spreadsheet_id}/values/{clear_range}:clear",
+            headers=headers,
+            data={},
+        )
+        result = _json_request(
+            f"https://sheets.googleapis.com/v4/spreadsheets/{spreadsheet_id}/values/{encoded_range}?valueInputOption=RAW",
+            headers=headers,
+            data={"range": a1, "majorDimension": "ROWS", "values": values},
+            method="PUT",
+        )
+        total_rows += max(0, len(values) - 1)
+        updated_cells += int(result.get("updatedCells", 0) or 0)
     return {
         "spreadsheet_id": spreadsheet_id,
         "url": f"https://docs.google.com/spreadsheets/d/{spreadsheet_id}/edit",
-        "rows": max(0, len(values) - 1),
-        "updated_cells": int(result.get("updatedCells", 0) or 0),
+        "rows": total_rows,
+        "updated_cells": updated_cells,
+        "worksheets": [title for title, _ in tabs],
     }
