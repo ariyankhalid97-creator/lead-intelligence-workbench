@@ -1,5 +1,20 @@
 # Changelog
 
+## 2.6.0 — 2026-10-30
+
+### Professional workspace design
+
+- Preserve the compact dark sidebar while rebuilding the application workspace with a neutral high-contrast palette, tighter typography, clearer hierarchy and consistent form, card, table and dialog treatments.
+- Replace oversized scrolling areas with bounded panels, sticky controls and expandable research-memory sections.
+- Add a dedicated consistency-memory summary to Local AI and a learned-niche section to the Research Library.
+
+### Private local-AI consistency memory
+
+- Add a durable, niche-scoped SQLite memory snapshot built from completed-run statistics, historical provider performance, contact coverage, approved or rejected terminology and recorded outcomes.
+- Retrieve compact memory at prompt time for phrase planning, evidence review and strict compilation without changing Ollama model weights.
+- Exclude lead names, emails, phones, URLs and page text from the AI memory snapshot; current-run evidence and deterministic validators remain authoritative.
+- Refresh memory after compilation, teaching feedback and outreach outcomes, with a manual refresh control and explicit confidence state.
+
 ## 2.5.1 — 2026-10-29
 
 ### Public project and documentation

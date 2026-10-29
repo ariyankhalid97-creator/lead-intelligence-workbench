@@ -24,6 +24,7 @@ import outreach
 import browser_session
 import connections
 import intelligence
+import ai_brain
 import sequence_engine
 import workflow
 import personal_offer
@@ -187,6 +188,13 @@ class Handler(BaseHTTPRequestHandler):
             except ValueError as exc:
                 self.send({"error": str(exc)}, 400)
             return
+        if path == "/api/intelligence/brain":
+            niche = parse_qs(parsed.query).get("niche", [""])[0]
+            try:
+                self.send(ai_brain.snapshot(niche))
+            except ValueError as exc:
+                self.send({"error": str(exc)}, 400)
+            return
         if path == "/api/intelligence/niche-packs":
             self.send(intelligence.niche_packs())
             return
@@ -338,6 +346,7 @@ class Handler(BaseHTTPRequestHandler):
             "/app.js": "app.js",
             "/style.css": "style.css",
             "/tokens.css": "tokens.css",
+            "/professional.css": "professional.css",
             "/logo.svg": "logo.svg",
         }
         if path in static:
@@ -432,6 +441,9 @@ class Handler(BaseHTTPRequestHandler):
                 return
             if self.path == "/api/intelligence/ai-teaching":
                 self.send(intelligence.save_ai_teaching(params), 201)
+                return
+            if self.path == "/api/intelligence/brain/refresh":
+                self.send(ai_brain.refresh(params.get("niche", "")), 201)
                 return
             if self.path == "/api/intelligence/ai-terms":
                 self.send(

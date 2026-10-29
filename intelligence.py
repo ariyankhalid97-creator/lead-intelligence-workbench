@@ -10,6 +10,7 @@ from collections import Counter
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse
 
+import ai_brain
 import ai_teaching
 import engine
 import evidence_compiler
@@ -17,6 +18,14 @@ import niche_catalog
 import research_packs
 import sequence_engine
 from contacts import now
+
+
+def _refresh_brain(niche):
+    """Keep memory failures isolated from the lead workflow."""
+    try:
+        return ai_brain.refresh(niche) if _clean(niche) else None
+    except Exception:
+        return None
 
 OUTCOMES = {
     "delivered",
@@ -392,7 +401,9 @@ def save_ai_teaching(data):
         pack["ai_notes"] = ai_teaching.clean_notes(data.get("notes"), 800)
     pack["ai_terms_updated_at"] = now()
     _save_pack(pack)
-    return ai_teaching.for_display(niche, pack)
+    result = ai_teaching.for_display(niche, pack)
+    _refresh_brain(niche)
+    return result
 
 
 def approve_ai_terms(niche, phrases, model="", accepted=True):
@@ -408,7 +419,9 @@ def approve_ai_terms(niche, phrases, model="", accepted=True):
         pack["ai_terms_updated_at"] = now()
         _save_pack(pack)
     ai_teaching.record_feedback(niche, safe, accepted, model)
-    return ai_teaching.for_display(niche, pack)
+    result = ai_teaching.for_display(niche, pack)
+    _refresh_brain(niche)
+    return result
 
 
 def restore_remembered_contacts(rows):
@@ -1130,6 +1143,7 @@ def compile_job(job):
             summary[action] += 1
             summary["changes_detected"] += int(changed)
             summary["opportunity_signals"] += len(signals)
+    brain = _refresh_brain(niche)
     return {
         "schema_version": 3,
         "compiled_entities": len(rows),
@@ -1138,6 +1152,11 @@ def compile_job(job):
         "opportunity_signals": summary["opportunity_signals"],
         "niche_pack": pack.get("name"),
         "compiled_at": stamp,
+        "consistency_memory": {
+            "updated": bool(brain),
+            "confidence": (brain or {}).get("confidence", "unavailable"),
+            "source_runs": (brain or {}).get("source_runs", 0),
+        },
     }
 
 
@@ -1248,6 +1267,13 @@ def record_outcome(data):
                 ),
             )
     sequence_engine.apply_outcome(company_id, email, outcome, data)
+    if company_id:
+        with engine.connection() as conn:
+            niche_row = conn.execute(
+                "SELECT niche FROM intelligence_companies WHERE id=?", (company_id,)
+            ).fetchone()
+        if niche_row:
+            _refresh_brain(niche_row[0])
     return {"recorded": True, "company_id": company_id, "outcome": outcome}
 
 

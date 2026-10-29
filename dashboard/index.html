@@ -7,6 +7,7 @@
     <link rel="icon" href="/logo.svg" type="image/svg+xml" />
     <link rel="stylesheet" href="/tokens.css" />
     <link rel="stylesheet" href="/style.css" />
+    <link rel="stylesheet" href="/professional.css" />
     <script defer src="/app.js"></script>
   </head>
   <body>
@@ -407,6 +408,19 @@ Dallas, Texas</textarea>
               <p id="aiStatus" class="muted" role="status">
                 Checking your installed local models…
               </p>
+              <div class="ai-brain-summary">
+                <div>
+                  <span class="eyebrow">PERSISTENT CONSISTENCY MEMORY</span>
+                  <b id="aiBrainTitle">Building a private research brain</b>
+                  <small id="aiBrainSummary"
+                    >Enter a service to load its local memory.</small
+                  >
+                </div>
+                <button id="aiBrainRefresh" class="ghost small" type="button">
+                  Refresh memory
+                </button>
+                <div id="aiBrainStats" class="ai-brain-stats"></div>
+              </div>
               <label for="aiModel">Local model</label>
               <select id="aiModel" disabled>
                 <option value="">No model available</option>
@@ -541,10 +555,19 @@ Dallas, Texas</textarea>
             </p>
           </div>
         </div>
-        <section class="workspace-section" aria-labelledby="builtInSourcesHeading">
+        <section
+          class="workspace-section"
+          aria-labelledby="builtInSourcesHeading"
+        >
           <div class="section-heading">
-            <div><span class="eyebrow">AUTOMATIC WATERFALL</span><h2 id="builtInSourcesHeading">Built-in and local sources</h2></div>
-            <p>Available sources run only when relevant to the niche, country and selected workflow.</p>
+            <div>
+              <span class="eyebrow">AUTOMATIC WATERFALL</span>
+              <h2 id="builtInSourcesHeading">Built-in and local sources</h2>
+            </div>
+            <p>
+              Available sources run only when relevant to the niche, country and
+              selected workflow.
+            </p>
           </div>
           <div id="sourceCards" class="source-grid"></div>
         </section>
@@ -560,7 +583,11 @@ Dallas, Texas</textarea>
             <span id="connectionSummary" class="badge">0 connected</span>
           </summary>
           <div class="connections-panel-body">
-            <p class="section-intro">Connect only the services you use. Credentials stay in Windows Credential Manager and optional paid providers remain off until explicitly enabled.</p>
+            <p class="section-intro">
+              Connect only the services you use. Credentials stay in Windows
+              Credential Manager and optional paid providers remain off until
+              explicitly enabled.
+            </p>
             <div id="connectionCards" class="connection-grid"></div>
             <p id="connectionStatus" class="fine-print" role="status"></p>
             <details class="source-catalog-details">
@@ -672,28 +699,62 @@ Dallas, Texas</textarea>
           <p id="registryNotice" class="fine-print" role="status"></p>
         </section>
         <div id="registryCards" class="source-grid registry-results"></div>
-        <section class="card offer-prospect-panel" aria-labelledby="offerProspectHeading">
+        <section
+          class="card offer-prospect-panel"
+          aria-labelledby="offerProspectHeading"
+        >
           <div class="card-title">
             <span class="step">AI</span>
             <div>
               <h2 id="offerProspectHeading">Offer-to-buyer automation</h2>
-              <p>Describe what you sell. The app prepares company discovery, contact enrichment and decision-maker review.</p>
+              <p>
+                Describe what you sell. The app prepares company discovery,
+                contact enrichment and decision-maker review.
+              </p>
             </div>
           </div>
           <div class="offer-prospect-controls">
-            <label for="offerProduct">Product, service or target niche<input id="offerProduct" maxlength="120" placeholder="e.g. electronic signatures, payroll software, roofing" /></label>
-            <label for="offerCountry">Country<select id="offerCountry"><option value="US">United States</option><option value="SG">Singapore</option><option value="MY">Malaysia</option><option value="AU">Australia</option></select></label>
-            <button id="buildOfferPlan" class="primary" type="button">Find likely buyers</button>
+            <label for="offerProduct"
+              >Product, service or target niche<input
+                id="offerProduct"
+                maxlength="120"
+                placeholder="e.g. electronic signatures, payroll software, roofing"
+            /></label>
+            <label for="offerCountry"
+              >Country<select id="offerCountry">
+                <option value="US">United States</option>
+                <option value="SG">Singapore</option>
+                <option value="MY">Malaysia</option>
+                <option value="AU">Australia</option>
+              </select></label
+            >
+            <button id="buildOfferPlan" class="primary" type="button">
+              Find likely buyers
+            </button>
           </div>
           <div class="offer-live-sheet">
             <div class="check-row">
               <input id="offerLiveSheets" type="checkbox" checked disabled />
-              <label for="offerLiveSheets">Live sync this run to Google Sheets<small>Creates a separate titled worksheet and refreshes it while leads arrive.</small></label>
+              <label for="offerLiveSheets"
+                >Live sync this run to Google Sheets<small
+                  >Creates a separate titled worksheet and refreshes it while
+                  leads arrive.</small
+                ></label
+              >
             </div>
-            <button id="offerGoogleConnect" class="secondary" type="button">Connect Google Sheets</button>
-            <p id="offerSheetStatus" class="fine-print" role="status">Checking Google authorization…</p>
+            <button id="offerGoogleConnect" class="secondary" type="button">
+              Connect Google Sheets
+            </button>
+            <p id="offerSheetStatus" class="fine-print" role="status">
+              Checking Google authorization…
+            </p>
           </div>
-          <div id="offerPlan" class="offer-plan empty-state"><b>Ready for an offer</b><p>Describe what you sell to generate an evidence-aware buyer plan.</p></div>
+          <div id="offerPlan" class="offer-plan empty-state">
+            <b>Ready for an offer</b>
+            <p>
+              Describe what you sell to generate an evidence-aware buyer plan.
+            </p>
+          </div>
         </section>
       </section>
       <section id="libraryView" class="view hidden">
@@ -743,6 +804,28 @@ Dallas, Texas</textarea>
               <div class="memory-section-body">
                 <div id="intelligenceQueue" class="intelligence-queue">
                   <p>Loading work queue…</p>
+                </div>
+              </div>
+            </details>
+            <details class="library-memory-section">
+              <summary>
+                <span
+                  ><b>Local AI consistency brain</b
+                  ><small id="brainMemoryCount"
+                    >Loading learned niches…</small
+                  ></span
+                >
+                <span class="memory-section-icon" aria-hidden="true">+</span>
+              </summary>
+              <div class="memory-section-body">
+                <p class="fine-print">
+                  Completed-run statistics and your approved terminology become
+                  local, niche-specific guidance. Lead names, contacts and page
+                  text are excluded. This is retrieval memory, not hidden model
+                  training.
+                </p>
+                <div id="brainMemoryList" class="brain-memory-list">
+                  <p>Loading local memory…</p>
                 </div>
               </div>
             </details>
@@ -1484,11 +1567,13 @@ Dallas, Texas</textarea>
             <div class="card-title">
               <span class="step">03</span>
               <div>
-                <h3 id="employeeDiscoveryHeading">LinkedIn employee worksheet</h3>
+                <h3 id="employeeDiscoveryHeading">
+                  LinkedIn employee worksheet
+                </h3>
                 <p>
-                  After company LinkedIn URLs are verified, inspect their visible
-                  People pages and save sourced professional profile links in a
-                  separate Google Sheets worksheet.
+                  After company LinkedIn URLs are verified, inspect their
+                  visible People pages and save sourced professional profile
+                  links in a separate Google Sheets worksheet.
                 </p>
               </div>
             </div>
@@ -1538,7 +1623,10 @@ Dallas, Texas</textarea>
               aria-label="Employee discovery progress"
             ></progress>
             <div id="employeeDiscoveryStats" class="chips"></div>
-            <div id="employeeDiscoveryPreview" class="employee-profile-preview"></div>
+            <div
+              id="employeeDiscoveryPreview"
+              class="employee-profile-preview"
+            ></div>
             <p class="fine-print">
               Uses the dedicated Chrome profile you signed into. It stores only
               visible names, headlines, profile URLs, company evidence and

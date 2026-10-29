@@ -49,6 +49,7 @@ Repeated searches for the same niche and locations continue after earlier batche
 | Search History | Original parameters, provider queries, source events, partial results, failures, checkpoints and exact stop reasons for each run. |
 | Research Library | Completed collections with canonical prospects, evidence, conflicts, duplicate lineage, verification and exports kept together. |
 | Lead Intelligence | Cross-run company memory, parent-brand and operating-entity identity, locations, contacts, evidence IDs, website changes, outcomes and one next-best action. |
+| AI Consistency Brain | Niche-scoped aggregate run statistics, reviewed terminology, source performance and outcome signals retrieved locally at prompt time without storing lead contacts. |
 | Outreach | Approved templates and drafts, suppression decisions, campaign assignments, provider results, replies and terminal outcomes written back to company memory. |
 
 No stage flattens the preceding one. A compiled field remains traceable to its source URL, capture time, method and evidence excerpt, while unresolved conflicts remain visible for review.
@@ -150,6 +151,14 @@ The current task routing favors:
 If no model is available, discovery, verification, organization, exports, Google Sheets, and manual templates continue to work. AI output is advisory and cannot browse independently, promote a snippet into a verified fact, or send outreach without approval.
 
 Local AI is used only where it adds judgment: niche phrase suggestions, fit review, contact-role classification, evidence-bounded intelligence and unsent outreach drafts. Curated and user-approved terms can be remembered in the niche pack for later searches. Deterministic validation still controls query safety, entity identity, duplicate merging, email syntax, source provenance, DNC rules and send eligibility.
+
+### Does continued research train the model?
+
+It does not alter or fine-tune the installed Ollama model weights. Instead, Lead Extractor maintains a private consistency brain in SQLite. After completed workflows, reviewed phrase decisions and recorded outcomes, it rebuilds a niche-scoped snapshot containing aggregate run counts, historical source performance, contact-coverage totals, approved and rejected terminology, and outcome counts. A small relevant portion is retrieved into later prompts.
+
+This retrieval design is deliberate: it makes repeated work more consistent while keeping evidence boundaries clear. The snapshot excludes company names, emails, phones, URLs and page text. Memory is guidance, never proof that a source was searched or a lead fact is true; current-run evidence and deterministic validation always win. The dashboard shows the memory confidence, contributing runs and feedback count, and lets the user refresh it explicitly.
+
+The design follows the useful local persistence patterns documented by [LangGraph's SQLite checkpointer](https://github.com/langchain-ai/langgraph/tree/main/libs/checkpoint-sqlite) and the memory extraction/retrieval separation demonstrated by [Mem0](https://github.com/mem0ai/mem0), without adding their heavier runtime dependencies to the desktop application.
 
 For strict compilation, the model receives the retained evidence ledger rather than an unrestricted prompt. Its JSON must match the project schema; every claim and opportunity signal must cite an existing evidence ID and copy a literal supporting excerpt. A bad citation, unsupported enum or invented fact rejects the complete model response, after which the deterministic compilation remains available.
 

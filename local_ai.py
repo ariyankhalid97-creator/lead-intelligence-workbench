@@ -16,6 +16,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
 from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 
+import ai_brain
 import ai_teaching
 
 BASE_URL = "http://127.0.0.1:11434"
@@ -587,6 +588,7 @@ def plan(niche, locations, model, cancel=None, observed_terms=None, teaching=Non
         }
     try:
         guidance = ai_teaching.context(niche, teaching)
+        brain = ai_brain.prompt_context(niche)
         extra_terms = [
             *guidance.get("specialist_terms", []),
             *guidance.get("approved_examples", []),
@@ -634,6 +636,7 @@ def plan(niche, locations, model, cancel=None, observed_terms=None, teaching=Non
                 "avoid_terms": guidance.get("avoid_terms", []),
                 "editor_notes": guidance.get("editor_notes", ""),
                 "style_rules": guidance.get("style_rules", []),
+                "consistency_memory": brain,
                 "terminology_observed_in_compiled_results": [
                     _clean_text(item, 100)
                     for item in (observed_terms or [])[:12]
@@ -1044,6 +1047,7 @@ def review(lead, model, offer="", cancel=None, teaching=None, niche=""):
     try:
         chosen = _choose_model(model)
         guidance = ai_teaching.compile_context(niche, teaching) if niche else {}
+        brain = ai_brain.prompt_context(niche) if niche else {}
         raw = _generate(
             chosen,
             "You are an evidence-grounded LOCAL research assistant. Return JSON only. "
@@ -1066,7 +1070,8 @@ def review(lead, model, offer="", cancel=None, teaching=None, niche=""):
             "do not invent missing details. This is a review_and_draft task, not review only. "
             "When drafting_requested is false, this is review_only: return empty draft subject and body. "
             "If editor_teaching is present, use its terminology only as style guidance, never as evidence, "
-            "and avoid claims about anything listed in avoid_claims_about.",
+            "and avoid claims about anything listed in avoid_claims_about. Consistency memory is aggregate "
+            "historical guidance only: never cite it or turn it into a lead fact.",
             {
                 "task": "review_and_draft" if offer else "review_only",
                 "drafting_requested": bool(offer),
@@ -1077,6 +1082,7 @@ def review(lead, model, offer="", cancel=None, teaching=None, niche=""):
                     for source in sources
                 ],
                 **({"editor_teaching": guidance} if guidance else {}),
+                **({"consistency_memory": brain} if brain else {}),
             },
             {
                 "type": "object",
@@ -1252,6 +1258,7 @@ def compile_intelligence(
         )
     chosen = _choose_model(model)
     guidance = ai_teaching.compile_context(niche, teaching) if niche else {}
+    brain = ai_brain.prompt_context(niche) if niche else {}
     data = {
         "evidence_ledger": prompt_ledger,
         "canonical_company_id": company_id,
@@ -1262,6 +1269,8 @@ def compile_intelligence(
     }
     if guidance:
         data["editor_teaching"] = guidance
+    if brain:
+        data["consistency_memory"] = brain
     raw = _generate(
         chosen,
         evidence_compiler.COMPILER_SYSTEM_PROMPT,

@@ -24,6 +24,15 @@ CREATE TABLE IF NOT EXISTS ai_tasks (
  payload TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_ai_tasks_updated ON ai_tasks(updated_at);
+CREATE TABLE IF NOT EXISTS ai_memory_snapshots (
+ niche_slug TEXT PRIMARY KEY,
+ niche TEXT NOT NULL,
+ payload TEXT NOT NULL DEFAULT '{}',
+ source_runs INTEGER NOT NULL DEFAULT 0,
+ feedback_events INTEGER NOT NULL DEFAULT 0,
+ updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_ai_memory_updated ON ai_memory_snapshots(updated_at DESC);
 CREATE TABLE IF NOT EXISTS verification_tasks (
  id TEXT PRIMARY KEY,
  created_at TEXT NOT NULL,

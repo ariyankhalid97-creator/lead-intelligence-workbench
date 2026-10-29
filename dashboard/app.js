@@ -191,6 +191,7 @@ let job = null,
   library = null,
   intelligenceOverview = null,
   intelligenceQueue = [],
+  brainOverview = null,
   nichePacks = [],
   selectedReferences = new Set(),
   preparedReferenceIds = [];
@@ -221,6 +222,7 @@ let aiConnection = null,
   aiBatchState = null,
   aiBatchPolling = false,
   aiProposal = null,
+  aiBrain = null,
   aiTeachingNiche = "",
   aiTeachingTimer = null,
   detailContext = null;
@@ -277,9 +279,11 @@ async function loadAiStatus() {
             const size = model.parameter_size
               ? ` · ${model.parameter_size}`
               : "";
-            const role = Array.isArray(model.recommended_for) && model.recommended_for.length
-              ? ` · best for ${model.recommended_for[0]}`
-              : "";
+            const role =
+              Array.isArray(model.recommended_for) &&
+              model.recommended_for.length
+                ? ` · best for ${model.recommended_for[0]}`
+                : "";
             return `<option value="${escapeHtml(name)}">${escapeHtml(name + size + role)}</option>`;
           })
           .join("")
@@ -333,10 +337,80 @@ async function loadAiTeaching() {
     const curated = (data.curated_terms || []).length;
     $("aiTeachStatus").textContent =
       `${(data.terms || []).length} saved phrase${(data.terms || []).length === 1 ? "" : "s"} · ${curated} curated example${curated === 1 ? "" : "s"}${data.updated_at ? ` · updated ${String(data.updated_at).slice(0, 10)}` : ""}`;
+    await loadAiBrain(requested);
   } catch (err) {
     if (aiTeachingNiche === requested)
       $("aiTeachStatus").textContent =
         "Teaching memory is unavailable: " + err.message;
+  }
+}
+function renderAiBrain(data) {
+  aiBrain = data || null;
+  if (!$("aiBrainTitle")) return;
+  if (!data?.niche) {
+    $("aiBrainTitle").textContent = "Building a private research brain";
+    $("aiBrainSummary").textContent =
+      "Enter a service to load its local memory.";
+    $("aiBrainStats").innerHTML = "";
+    return;
+  }
+  $("aiBrainTitle").textContent =
+    `${data.niche} · ${data.confidence || "new"} memory`;
+  $("aiBrainSummary").textContent =
+    `${Number(data.source_runs) || 0} completed runs and ${Number(data.feedback_events) || 0} reviewed teaching events inform future prompts. Current-run evidence still has final authority.`;
+  $("aiBrainStats").innerHTML = [
+    ["Results observed", data.results_observed],
+    ["Approved phrases", data.approved_phrases?.length],
+    ["Avoid phrases", data.avoid_phrases?.length],
+    ["Sources compared", data.historical_provider_performance?.length],
+  ]
+    .map(
+      ([label, value]) =>
+        `<span>${escapeHtml(label)} · ${Number(value) || 0}</span>`,
+    )
+    .join("");
+}
+async function loadAiBrain(niche = $("niche").value.trim()) {
+  if (niche.length < 2) {
+    renderAiBrain(null);
+    return null;
+  }
+  try {
+    const data = await aiApi(
+      "/api/intelligence/brain?niche=" + encodeURIComponent(niche),
+    );
+    if ($("niche").value.trim() === niche) renderAiBrain(data);
+    return data;
+  } catch (err) {
+    if ($("niche").value.trim() === niche) {
+      $("aiBrainTitle").textContent = "Consistency memory unavailable";
+      $("aiBrainSummary").textContent = err.message;
+    }
+    return null;
+  }
+}
+async function refreshAiBrain() {
+  const niche = $("niche").value.trim();
+  if (niche.length < 2) {
+    toast("Enter a service first.", "error");
+    return;
+  }
+  const button = $("aiBrainRefresh");
+  button.disabled = true;
+  $("aiBrainSummary").textContent =
+    "Rebuilding memory from completed local runs and reviewed feedback…";
+  try {
+    const data = await api("/api/intelligence/brain/refresh", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ niche }),
+    });
+    renderAiBrain(data);
+    toast("Consistency memory refreshed.");
+  } catch (err) {
+    $("aiBrainSummary").textContent = err.message;
+  } finally {
+    button.disabled = false;
   }
 }
 function listLines(value) {
@@ -375,6 +449,7 @@ async function saveAiTeaching() {
     aiTeachingNiche = niche;
     $("aiTeachStatus").textContent =
       `Saved. Future phrase and intelligence prompts for ${data.niche} will use this guidance.`;
+    await loadAiBrain(niche);
   } catch (err) {
     $("aiTeachStatus").textContent = err.message;
   } finally {
@@ -642,6 +717,7 @@ function renderAiProposal() {
 }
 $("aiRefresh").addEventListener("click", loadAiStatus);
 $("aiTeachSave").addEventListener("click", saveAiTeaching);
+$("aiBrainRefresh").addEventListener("click", refreshAiBrain);
 $("aiModel").addEventListener("change", () => {
   localStorage.setItem("leadfinder.aiModel", $("aiModel").value);
   if ($("campaignAiModel")) $("campaignAiModel").value = $("aiModel").value;
@@ -825,9 +901,13 @@ async function buildOfferPlan(segment = "") {
     const p = currentOfferPlan;
     box.className = "offer-plan";
     box.innerHTML = `<div class="offer-plan-heading"><div><span class="badge">${escapeHtml(p.country_name)}</span><h3>${escapeHtml(p.offer)} buyer plan</h3><p>${escapeHtml(p.summary)}</p></div><button id="runOfferPlan" class="primary" type="button">Start complete search →</button></div><p class="notice"><b>Country fit:</b> ${escapeHtml(p.country_fit_note)}</p><p><b>Selected buyer segment:</b> ${escapeHtml(p.label || p.selected_segment)}</p><div class="offer-segments">${p.segments.map((item) => `<button class="offer-segment ${item.niche === p.selected_segment ? "selected" : ""}" type="button" data-segment="${escapeHtml(item.niche)}"><b>${escapeHtml(item.label || item.niche)}</b><small>${escapeHtml(item.reason)}</small></button>`).join("")}</div><details open><summary>Company types and workflows</summary><div class="offer-plan-columns"><div><b>Company types to discover</b><ul>${p.subsegments.map((x) => `<li>${escapeHtml(x)}</li>`).join("")}</ul></div><div><b>Potential document workflows</b><ul>${p.documents.map((x) => `<li>${escapeHtml(x)}</li>`).join("")}</ul></div></div></details><details><summary>Decision-makers and fit evidence</summary><div class="offer-plan-columns"><div><b>Likely roles</b><ul>${p.decision_roles.map((x) => `<li>${escapeHtml(x)}</li>`).join("")}</ul></div><div><b>Evidence to confirm</b><ul>${p.fit_signals.map((x) => `<li>${escapeHtml(x)}</li>`).join("")}</ul></div></div></details><details><summary>Discovery approaches</summary><ol>${p.search_approaches.map((x) => `<li>${escapeHtml(x)}</li>`).join("")}</ol></details><details><summary>Research boundary and method</summary><p><b>Boundary:</b> ${escapeHtml(p.legal_boundary)}</p><p><b>Exclude:</b> ${escapeHtml(p.exclusions.join(" · "))}</p><small>${escapeHtml(p.method)}</small></details>`;
-    box.querySelectorAll(".offer-segment").forEach((button) =>
-      button.addEventListener("click", () => buildOfferPlan(button.dataset.segment)),
-    );
+    box
+      .querySelectorAll(".offer-segment")
+      .forEach((button) =>
+        button.addEventListener("click", () =>
+          buildOfferPlan(button.dataset.segment),
+        ),
+      );
     $("runOfferPlan").addEventListener("click", runOfferPlan);
   } catch (error) {
     box.className = "offer-plan empty-state";
@@ -855,7 +935,10 @@ async function runOfferPlan() {
     button.disabled = false;
     button.textContent = "Start complete search →";
     const box = $("offerPlan");
-    box.insertAdjacentHTML("beforeend", `<p class="notice">Could not save the researched intelligence pack: ${escapeHtml(error.message)}</p>`);
+    box.insertAdjacentHTML(
+      "beforeend",
+      `<p class="notice">Could not save the researched intelligence pack: ${escapeHtml(error.message)}</p>`,
+    );
     return;
   }
   $("niche").value = p.selected_segment;
@@ -1523,7 +1606,9 @@ function details(r, context = {}) {
   ]
     .filter(Boolean)
     .map((x) => link(x))
-    .join("")}${link(linkedinDecisionQuery, "Search likely decision-makers on LinkedIn ↗")}</div>${emailQualityBadge(r)}<p class="fine-print">LinkedIn opens for manual review in your signed-in browser. The app does not scrape authenticated profiles.</p>`;
+    .join(
+      "",
+    )}${link(linkedinDecisionQuery, "Search likely decision-makers on LinkedIn ↗")}</div>${emailQualityBadge(r)}<p class="fine-print">LinkedIn opens for manual review in your signed-in browser. The app does not scrape authenticated profiles.</p>`;
   const sourceBody = `<div class="intel-link-grid">${link(r.source_url, "Open primary public source ↗")}${link(r.website, "Open business website ↗")}</div>${evidence.length ? evidence.map((e) => `<div class="evidence"><b>${escapeHtml(e.field)}: ${escapeHtml(e.value)}</b><small>${escapeHtml(e.method)} · ${escapeHtml(e.observed_at)}</small>${link(e.url)}</div>`).join("") : "<p>No website evidence recorded. Listing contacts can be checked at the public source link above.</p>"}`;
   $("detailBody").innerHTML =
     `${snapshot}${intelligenceSection("Contact intelligence", "Published phone, email, decision-maker and profiles", contactBody, true, r.email ? "Email found" : "Needs contact")}${intelligenceSection("Contact evidence", `${evidence.length} retained source claim${evidence.length === 1 ? "" : "s"}`, sourceBody)}`;
@@ -2100,7 +2185,8 @@ function employeeStateForCurrentJob() {
     profiles_found: savedEmployees.length,
     titles_found: savedEmployees.filter((profile) => profile?.title).length,
     tagged_profiles: savedEmployees.filter(
-      (profile) => Array.isArray(profile?.role_tags) && profile.role_tags.length,
+      (profile) =>
+        Array.isArray(profile?.role_tags) && profile.role_tags.length,
     ).length,
     employees: savedEmployees.slice(0, 50),
   };
@@ -2116,9 +2202,10 @@ function renderEmployeeDiscovery() {
   $("employeePerCompany").disabled = running;
   $("startEmployeeDiscovery").disabled =
     !job || active(job.status) || running || availableCompanies === 0;
-  $("startEmployeeDiscovery").textContent = state?.status === "complete"
-    ? "Rebuild employee worksheet"
-    : `Check up to ${Math.min(100, availableCompanies || 0)} companies`;
+  $("startEmployeeDiscovery").textContent =
+    state?.status === "complete"
+      ? "Rebuild employee worksheet"
+      : `Check up to ${Math.min(100, availableCompanies || 0)} companies`;
   $("resumeEmployeeDiscovery").classList.toggle("hidden", !waiting);
   $("cancelEmployeeDiscovery").classList.toggle("hidden", !running);
   $("employeeDiscoveryProgress").value = Number(state?.progress || 0);
@@ -2143,7 +2230,10 @@ function renderEmployeeDiscovery() {
     ["Profiles tagged", state?.tagged_profiles || 0],
     ["Failures", state?.failures?.length || 0],
   ]
-    .map(([label, value]) => `<span class="chip">${escapeHtml(label)}: ${Number(value) || 0}</span>`)
+    .map(
+      ([label, value]) =>
+        `<span class="chip">${escapeHtml(label)}: ${Number(value) || 0}</span>`,
+    )
     .join("");
   const employees = Array.isArray(state?.employees) ? state.employees : [];
   $("employeeDiscoveryPreview").innerHTML = employees.length
@@ -2571,13 +2661,19 @@ async function loadHistoryPreviews(detail) {
 }
 async function loadLibrary() {
   try {
-    [library, intelligenceOverview, intelligenceQueue, nichePacks] =
-      await Promise.all([
-        api("/api/library"),
-        api("/api/intelligence/overview"),
-        api("/api/intelligence/queue"),
-        api("/api/intelligence/niche-packs"),
-      ]);
+    [
+      library,
+      intelligenceOverview,
+      intelligenceQueue,
+      nichePacks,
+      brainOverview,
+    ] = await Promise.all([
+      api("/api/library"),
+      api("/api/intelligence/overview"),
+      api("/api/intelligence/queue"),
+      api("/api/intelligence/niche-packs"),
+      api("/api/intelligence/brain"),
+    ]);
     $("librarySummary").textContent =
       `${library.collections?.length || 0} compiled research collection${library.collections?.length === 1 ? "" : "s"} · ${library.compiled_record_count || 0} organized current prospects · ${library.record_count || 0} historical references retained separately.`;
     renderLibrary();
@@ -2605,6 +2701,19 @@ function renderIntelligence() {
         `<span class="chip">${label}: ${Number(value) || 0}</span>`,
     )
     .join("");
+  const memories = brainOverview?.memories || [];
+  if ($("brainMemoryCount"))
+    $("brainMemoryCount").textContent =
+      `${memories.length} learned niche${memories.length === 1 ? "" : "s"} · local and privacy-bounded`;
+  if ($("brainMemoryList"))
+    $("brainMemoryList").innerHTML = memories.length
+      ? memories
+          .map(
+            (item) =>
+              `<article class="brain-memory-item"><b>${escapeHtml(item.niche)}</b><small>${escapeHtml(item.confidence || "new")} confidence · ${Number(item.source_runs) || 0} runs · ${Number(item.results_observed) || 0} results · ${Number(item.feedback_events) || 0} feedback events</small></article>`,
+          )
+          .join("")
+      : "<p>No learned niche yet. Complete a research workflow or save reviewed AI teaching to create one.</p>";
   const items = (intelligenceQueue || [])
     .filter((item) => item.status === "open")
     .slice(0, 12);
