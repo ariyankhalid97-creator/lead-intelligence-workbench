@@ -27,6 +27,7 @@ import intelligence
 import sequence_engine
 import workflow
 import personal_offer
+import employee_discovery
 
 WEB = engine.SOURCE_ROOT / "dashboard"
 
@@ -265,6 +266,13 @@ class Handler(BaseHTTPRequestHandler):
                 task or {"error": "Verification task not found"}, 200 if task else 404
             )
             return
+        if path.startswith("/api/employee-discovery/"):
+            job_id = path.split("/")[-1]
+            try:
+                self.send(employee_discovery.get(job_id))
+            except ValueError as exc:
+                self.send({"error": str(exc)}, 404)
+            return
         if path == "/api/workflows/current":
             self.send(
                 workflow.current(parse_qs(parsed.query).get("job_id", [""])[0]) or {}
@@ -355,6 +363,28 @@ class Handler(BaseHTTPRequestHandler):
                 return
             if self.path == "/api/verification/start":
                 self.send({"id": verification.start(params)}, 202)
+                return
+            if self.path == "/api/employee-discovery/start":
+                self.send({"id": employee_discovery.start(params)}, 202)
+                return
+            if self.path.startswith("/api/employee-discovery/") and self.path.endswith(
+                "/resume"
+            ):
+                self.send(
+                    {"id": employee_discovery.resume(self.path.split("/")[-2])},
+                    202,
+                )
+                return
+            if self.path.startswith("/api/employee-discovery/") and self.path.endswith(
+                "/cancel"
+            ):
+                self.send(
+                    {
+                        "cancel_requested": employee_discovery.cancel(
+                            self.path.split("/")[-2]
+                        )
+                    }
+                )
                 return
             if self.path == "/api/workflows":
                 self.send({"id": workflow.start(params)}, 202)
@@ -577,6 +607,7 @@ def main():
     engine.init(recover=not args.preserve_active)
     ai_tasks.init(recover=not args.preserve_active)
     verification.init(recover=not args.preserve_active)
+    employee_discovery.init(recover=not args.preserve_active)
     outreach.init(recover=not args.preserve_active)
     intelligence.init()
     workflow.init(recover=not args.preserve_active)

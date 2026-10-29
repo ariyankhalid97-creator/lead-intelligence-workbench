@@ -25,6 +25,7 @@ test("discovery, history, sources and accessibility at desktop/mobile", async ({
   await expect(
     page.getByRole("heading", { name: "Build your search" }),
   ).toBeVisible();
+  await expect(page.getByLabel("Continue after earlier batches")).toBeChecked();
   await page.getByLabel("Business or service").fill("Roofing");
   await expect(
     page.getByText("roofing contractor", { exact: true }),
@@ -55,6 +56,12 @@ test("discovery, history, sources and accessibility at desktop/mobile", async ({
     path: "replica/clone-screens/S01-desktop.png",
     fullPage: true,
   });
+  await page.setViewportSize({ width: 768, height: 720 });
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  ).toBeTruthy();
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(
     page.getByRole("button", { name: /Find businesses/ }),

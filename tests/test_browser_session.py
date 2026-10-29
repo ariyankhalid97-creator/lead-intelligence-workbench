@@ -79,6 +79,49 @@ class BrowserCheckpointTests(unittest.TestCase):
             ),
         )
 
+    def test_employee_profile_urls_are_canonical_and_person_only(self):
+        self.assertEqual(
+            "https://www.linkedin.com/in/example-person/",
+            browser_session._canonical_linkedin_person_url(
+                "https://www.linkedin.com/in/example-person/?trk=people"
+            ),
+        )
+        self.assertEqual(
+            "",
+            browser_session._canonical_linkedin_person_url(
+                "https://www.linkedin.com/company/example-company/"
+            ),
+        )
+
+    def test_linkedin_person_card_removes_connection_degree_labels(self):
+        name, headline = browser_session._linkedin_person_card(
+            "Edmund Ho · 3rd Team Lead (Recruitment) at Example",
+            "Edmund Ho\n· 3rd\nTeam Lead (Recruitment) at Example\nConnect",
+        )
+        self.assertEqual("Edmund Ho", name)
+        self.assertEqual("Team Lead (Recruitment) at Example", headline)
+
+        name, headline = browser_session._linkedin_person_card(
+            "Juanna Ng",
+            "Juanna Ng\n· 3rd\nTalent Acquisition Specialist\nMessage",
+        )
+        self.assertEqual("Juanna Ng", name)
+        self.assertEqual("Talent Acquisition Specialist", headline)
+
+    def test_linkedin_checkpoint_does_not_match_normal_company_names(self):
+        self.assertFalse(
+            browser_session._linkedin_checkpoint_detected(
+                "https://www.linkedin.com/company/example/people/",
+                "People also follow NewChallenges Ads and Challenge Consulting",
+            )
+        )
+        self.assertTrue(
+            browser_session._linkedin_checkpoint_detected(
+                "https://www.linkedin.com/checkpoint/challenge/",
+                "Let's do a quick security check",
+            )
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

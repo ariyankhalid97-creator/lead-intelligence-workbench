@@ -204,6 +204,40 @@ class ConnectionTests(unittest.TestCase):
         self.assertEqual("E-sign Workflow - Rental & leasing operators", tab)
         self.assertEqual("Acme Rentals", values[1][2])
 
+    def test_employee_profiles_get_a_separate_deduplicated_worksheet(self):
+        title, values = connections._employee_sheet_tab(
+            {
+                "params": {
+                    "niche": "staffing agencies",
+                    "location": "Singapore",
+                },
+                "employees": [
+                    {
+                        "company_name": "Acme Staffing",
+                        "company_linkedin": "https://www.linkedin.com/company/acme/",
+                        "employee_name": "Example Person",
+                        "headline": "Operations Director",
+                        "employee_linkedin": "https://www.linkedin.com/in/example-person/",
+                        "evidence_url": "https://www.linkedin.com/company/acme/people/",
+                        "basis": "visible_linkedin_company_people_page",
+                        "observed_at": "2026-10-29T10:00:00+05:00",
+                    },
+                    {
+                        "employee_name": "Duplicate",
+                        "employee_linkedin": "https://www.linkedin.com/in/example-person/",
+                    },
+                ],
+            }
+        )
+        self.assertEqual("staffing agencies · Singapore · Employees", title)
+        self.assertEqual(list(connections.EMPLOYEE_SHEET_COLUMNS), values[0])
+        self.assertEqual(2, len(values))
+        self.assertEqual("Example Person", values[1][2])
+        self.assertEqual(
+            "https://www.linkedin.com/in/example-person/",
+            values[1][connections.EMPLOYEE_SHEET_COLUMNS.index("employee_linkedin")],
+        )
+
     def test_enabled_places_provider_maps_api_fields_to_lead(self):
         connections._write(
             "google_places",

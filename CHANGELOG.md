@@ -1,5 +1,20 @@
 # Changelog
 
+## 2.5.1 — 2026-10-29
+
+### LinkedIn and Google Sheets continuity
+
+- Refresh the current lead worksheet automatically after second-round verification so newly resolved company LinkedIn URLs reach Sheets.
+- Add resumable, browser-assisted employee discovery for verified LinkedIn company People pages with explicit login and checkpoint handling.
+- Create a separate, deduplicated employee worksheet containing visible professional names, headlines, profile URLs, company evidence and observation time.
+- Preserve the richest visible People-card headline, normalize supported job titles, and group the same worksheet by outreach priority, role, seniority and evidence-derived tags.
+- Narrow checkpoint detection to real challenge URLs and explicit verification messages so ordinary company names containing “challenge” cannot pause a run.
+- Restore employee title and tag totals correctly after reopening a saved run.
+- Prevent the two-column discovery workspace from overflowing at tablet-sized desktop windows.
+- Continue repeated niche-and-location searches after earlier batches, skip previously retained identities across sources, scan deeper in Maps, and label exhausted result pools.
+- Keep large verification reports collapsed below the employee controls so the next workflow stage is available without scrolling through every lead.
+- Bound employee collection to 100 companies, 100 visible profiles per company and 5,000 retained profiles; no invitations, messages, private contact extraction or checkpoint bypassing.
+
 ## 2.5.0 — 2026-10-28
 
 ### Connected workflow and recovery

@@ -207,6 +207,8 @@ let outreachTemplates = [],
   zohoConnected = false;
 let verificationTask = null,
   verificationPollTimer = null;
+let employeeDiscovery = null,
+  employeeDiscoveryPollTimer = null;
 let workflowTask = null,
   workflowPollTimer = null,
   workflowId = localStorage.getItem("leadfinder.workflowTask");
@@ -868,6 +870,7 @@ async function runOfferPlan() {
   $("phrases").value = p.phrases.slice(0, 10).join("\n");
   $("browser").checked = true;
   $("enrich").checked = true;
+  $("continuePrevious").checked = true;
   $("linkedWorkflow").checked = true;
   location.hash = "#discover";
   updatePlan();
@@ -1053,6 +1056,7 @@ $("searchForm").addEventListener("submit", async (event) => {
         source: $("source").value,
         browser: $("browser").checked,
         enrich: $("enrich").checked,
+        continue_previous: $("continuePrevious").checked,
         phrases: $("phrases").value,
         urls: $("urls").value,
         target: $("target").value,
@@ -1216,8 +1220,11 @@ function renderJob() {
   const interruption = job.interruption
     ? `<p class="notice"><b>Interrupted:</b> ${escapeHtml(String(job.interruption.reason || "unknown").replaceAll("_", " "))} · previous state ${escapeHtml(job.interruption.previous_status || "unknown")}. Collected results and completed-location checkpoints were retained.</p>`
     : "";
+  const continuation = job.continuation?.previously_collected
+    ? `<p class="notice"><b>Continuation batch ${Number(job.continuation.batch) || 2}:</b> ${Number(job.continuation.previously_collected) || 0} businesses from earlier matching runs are excluded. This run contains only newly discovered businesses.</p>`
+    : "";
   $("runCard").innerHTML =
-    `<div class="run-heading"><div><span class="eyebrow">${escapeHtml(job.status.toUpperCase().replaceAll("_", " "))}</span><h2>${escapeHtml(job.message)}</h2></div><div class="actions">${controls}</div></div><progress value="${job.progress || 0}" max="100" aria-label="Search progress"></progress><div class="run-status">${rows.length} collected · ${Math.round(job.elapsed || 0)} seconds elapsed · Results save automatically</div>${interruption}<p>${escapeHtml(job.status === "waiting" ? "Check the dedicated Chrome window. The search is waiting for your action." : job.status === "paused" || job.status === "pause_requested" ? "The run is safely paused. Continue uses this same saved research record." : job.diagnosis || "Inspect the business list or open diagnostics for source-by-source progress.")}</p><div class="chips">${Object.entries(
+    `<div class="run-heading"><div><span class="eyebrow">${escapeHtml(job.status.toUpperCase().replaceAll("_", " "))}</span><h2>${escapeHtml(job.message)}</h2></div><div class="actions">${controls}</div></div><progress value="${job.progress || 0}" max="100" aria-label="Search progress"></progress><div class="run-status">${rows.length} collected · ${Math.round(job.elapsed || 0)} seconds elapsed · Results save automatically</div>${interruption}${continuation}<p>${escapeHtml(job.status === "waiting" ? "Check the dedicated Chrome window. The search is waiting for your action." : job.status === "paused" || job.status === "pause_requested" ? "The run is safely paused. Continue uses this same saved research record." : job.diagnosis || "Inspect the business list or open diagnostics for source-by-source progress.")}</p><div class="chips">${Object.entries(
       job.providers || {},
     )
       .map(
@@ -2082,6 +2089,152 @@ $("resumeBrowserSearch").addEventListener("click", async () => {
   }
 });
 
+function employeeStateForCurrentJob() {
+  if (!job) return null;
+  if (employeeDiscovery?.job_id === job.id) return employeeDiscovery;
+  const saved = job.employee_discovery;
+  if (!saved || typeof saved !== "object") return null;
+  const savedEmployees = Array.isArray(job.employees) ? job.employees : [];
+  return {
+    ...saved,
+    profiles_found: savedEmployees.length,
+    titles_found: savedEmployees.filter((profile) => profile?.title).length,
+    tagged_profiles: savedEmployees.filter(
+      (profile) => Array.isArray(profile?.role_tags) && profile.role_tags.length,
+    ).length,
+    employees: savedEmployees.slice(0, 50),
+  };
+}
+
+function renderEmployeeDiscovery() {
+  if (!$("employeeDiscoveryStatus")) return;
+  const state = employeeStateForCurrentJob();
+  const availableCompanies = (rows || []).filter((row) => row.linkedin).length;
+  const running = ["queued", "running"].includes(state?.status);
+  const waiting = ["waiting", "interrupted", "failed"].includes(state?.status);
+  $("employeeCompanyLimit").disabled = running;
+  $("employeePerCompany").disabled = running;
+  $("startEmployeeDiscovery").disabled =
+    !job || active(job.status) || running || availableCompanies === 0;
+  $("startEmployeeDiscovery").textContent = state?.status === "complete"
+    ? "Rebuild employee worksheet"
+    : `Check up to ${Math.min(100, availableCompanies || 0)} companies`;
+  $("resumeEmployeeDiscovery").classList.toggle("hidden", !waiting);
+  $("cancelEmployeeDiscovery").classList.toggle("hidden", !running);
+  $("employeeDiscoveryProgress").value = Number(state?.progress || 0);
+  const message =
+    state?.message ||
+    (availableCompanies
+      ? `${availableCompanies} verified company LinkedIn URL${availableCompanies === 1 ? " is" : "s are"} ready for employee discovery.`
+      : "Complete second-round verification first so company LinkedIn URLs are available.");
+  const sheetLink = state?.sheet_url
+    ? ` ${link(state.sheet_url, `Open ${state.sheet_worksheet || "employee worksheet"} ↗`)}`
+    : "";
+  const sheetError = state?.sheet_error
+    ? ` <span class="error-text">Sheets: ${escapeHtml(state.sheet_error)}</span>`
+    : "";
+  $("employeeDiscoveryStatus").innerHTML =
+    `${escapeHtml(message)}${sheetLink}${sheetError}`;
+  $("employeeDiscoveryStats").innerHTML = [
+    ["Company URLs ready", availableCompanies],
+    ["Companies checked", state?.companies_checked || 0],
+    ["Profiles retained", state?.profiles_found || 0],
+    ["Titles found", state?.titles_found || 0],
+    ["Profiles tagged", state?.tagged_profiles || 0],
+    ["Failures", state?.failures?.length || 0],
+  ]
+    .map(([label, value]) => `<span class="chip">${escapeHtml(label)}: ${Number(value) || 0}</span>`)
+    .join("");
+  const employees = Array.isArray(state?.employees) ? state.employees : [];
+  $("employeeDiscoveryPreview").innerHTML = employees.length
+    ? employees
+        .slice(0, 20)
+        .map(
+          (profile) =>
+            `<article><div><b>${escapeHtml(profile.employee_name || "Visible LinkedIn member")}</b><small>${escapeHtml(profile.title || profile.headline || profile.company_name || "Title unavailable")}</small><small>${escapeHtml([profile.role_group, profile.seniority, profile.outreach_priority].filter(Boolean).join(" · "))}</small></div>${link(profile.employee_linkedin, "Open profile ↗")}</article>`,
+        )
+        .join("")
+    : "";
+}
+
+async function pollEmployeeDiscovery(jobId) {
+  clearTimeout(employeeDiscoveryPollTimer);
+  try {
+    employeeDiscovery = await api(
+      `/api/employee-discovery/${encodeURIComponent(jobId)}`,
+    );
+    renderEmployeeDiscovery();
+    if (["queued", "running"].includes(employeeDiscovery.status)) {
+      employeeDiscoveryPollTimer = setTimeout(
+        () => pollEmployeeDiscovery(jobId),
+        1400,
+      );
+      return;
+    }
+    if (job?.id === jobId) {
+      job = await api(`/api/jobs/${encodeURIComponent(jobId)}`);
+      rows = job.rows || [];
+      renderEmployeeDiscovery();
+    }
+  } catch (error) {
+    $("employeeDiscoveryStatus").textContent = error.message;
+  }
+}
+
+$("startEmployeeDiscovery").addEventListener("click", async () => {
+  if (!job) return;
+  $("startEmployeeDiscovery").disabled = true;
+  try {
+    await api("/api/employee-discovery/start", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        job_id: job.id,
+        company_limit: Number($("employeeCompanyLimit").value || 25),
+        per_company: Number($("employeePerCompany").value || 25),
+      }),
+    });
+    await pollEmployeeDiscovery(job.id);
+  } catch (error) {
+    $("employeeDiscoveryStatus").textContent = error.message;
+    renderEmployeeDiscovery();
+  }
+});
+
+$("resumeEmployeeDiscovery").addEventListener("click", async () => {
+  if (!job) return;
+  $("resumeEmployeeDiscovery").disabled = true;
+  try {
+    await api("/api/browser/clear-search-checkpoint", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    });
+    await api(`/api/employee-discovery/${encodeURIComponent(job.id)}/resume`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    });
+    await pollEmployeeDiscovery(job.id);
+  } catch (error) {
+    $("employeeDiscoveryStatus").textContent = error.message;
+  } finally {
+    $("resumeEmployeeDiscovery").disabled = false;
+  }
+});
+
+$("cancelEmployeeDiscovery").addEventListener("click", async () => {
+  if (!job) return;
+  $("cancelEmployeeDiscovery").disabled = true;
+  await api(`/api/employee-discovery/${encodeURIComponent(job.id)}/cancel`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: "{}",
+  }).catch((error) => {
+    $("employeeDiscoveryStatus").textContent = error.message;
+  });
+});
+
 function renderVerification() {
   const reports = rows
     .map((row) => ({ row, report: parseObject(row.verification) }))
@@ -2204,6 +2357,7 @@ function renderVerification() {
     (reports.length
       ? `${reports.length} saved verification reports. The selected rerun will verify ${selectedCount} of ${rows.length} retained leads.`
       : `Ready to verify ${selectedCount} of ${rows.length} retained leads.`);
+  renderEmployeeDiscovery();
 }
 
 async function pollVerification(taskId) {
@@ -2338,7 +2492,7 @@ async function loadHistory() {
           const locations = Array.from(
             new Set(group.runs.map((r) => r.params?.location).filter(Boolean)),
           );
-          return `<details class="history-group" data-group="${escapeHtml(key)}" ${openHistoryGroups.has(key) ? "open" : ""}><summary><span class="history-group-title">${escapeHtml(group.name)}</span><span class="history-group-meta">${group.runs.length} saved ${group.runs.length === 1 ? "run" : "runs"} · ${total} results across runs</span><span class="history-group-places">${escapeHtml(locations.slice(0, 3).join(" · "))}${locations.length > 3 ? ` · +${locations.length - 3} more` : ""}</span></summary><div class="history-runs">${group.runs.map((j) => `<article class="history-item" data-history-id="${escapeHtml(j.id)}"><div class="history-run-heading"><div><h2>${escapeHtml(j.params?.location || "Location not recorded")}</h2><p>${escapeHtml(new Date(j.created_at).toLocaleString())} · ${escapeHtml((j.params?.source || "source not recorded").replaceAll("_", " "))}</p><span class="badge ${["paused", "pause_requested", "interrupted"].includes(j.status) ? "candidate" : ""}">${escapeHtml(j.status.replaceAll("_", " "))} · ${Number(j.count) || 0} businesses</span>${["paused", "pause_requested", "interrupted"].includes(j.status) ? `<p class="notice">${escapeHtml(j.message || "This run can be continued from its saved checkpoint.")}</p>` : ""}</div><button class="secondary history-open" data-id="${escapeHtml(j.id)}">${["paused", "pause_requested", "interrupted"].includes(j.status) ? "Open & continue →" : "Open search →"}</button></div><div class="history-preview" data-preview-id="${escapeHtml(j.id)}" aria-live="polite"><p>Expand this research group to see what was scraped.</p></div></article>`).join("")}<p class="fine-print">Results across runs can overlap. Each saved run and its original evidence stay separate.</p></div></details>`;
+          return `<details class="history-group" data-group="${escapeHtml(key)}" ${openHistoryGroups.has(key) ? "open" : ""}><summary><span class="history-group-title">${escapeHtml(group.name)}</span><span class="history-group-meta">${group.runs.length} saved ${group.runs.length === 1 ? "run" : "runs"} · ${total} results across runs</span><span class="history-group-places">${escapeHtml(locations.slice(0, 3).join(" · "))}${locations.length > 3 ? ` · +${locations.length - 3} more` : ""}</span></summary><div class="history-runs">${group.runs.map((j) => `<article class="history-item" data-history-id="${escapeHtml(j.id)}"><div class="history-run-heading"><div><h2>${escapeHtml(j.params?.location || "Location not recorded")}</h2><p>${escapeHtml(new Date(j.created_at).toLocaleString())} · ${escapeHtml((j.params?.source || "source not recorded").replaceAll("_", " "))}${j.continuation?.previously_collected ? ` · continuation batch ${Number(j.continuation.batch) || 2}` : ""}</p><span class="badge ${["paused", "pause_requested", "interrupted"].includes(j.status) ? "candidate" : ""}">${escapeHtml(j.status.replaceAll("_", " "))} · ${Number(j.count) || 0} ${j.continuation?.previously_collected ? "new " : ""}businesses</span>${["paused", "pause_requested", "interrupted"].includes(j.status) ? `<p class="notice">${escapeHtml(j.message || "This run can be continued from its saved checkpoint.")}</p>` : ""}</div><button class="secondary history-open" data-id="${escapeHtml(j.id)}">${["paused", "pause_requested", "interrupted"].includes(j.status) ? "Open & continue →" : "Open search →"}</button></div><div class="history-preview" data-preview-id="${escapeHtml(j.id)}" aria-live="polite"><p>Expand this research group to see what was scraped.</p></div></article>`).join("")}<p class="fine-print">Continuation batches skip businesses retained by earlier matching runs. Each saved run and its original evidence stay separate.</p></div></details>`;
         }).join("")
       : '<div class="card search-card"><h2>No searches yet.</h2><p>Your first search will appear here automatically.</p></div>';
     $("historyList")

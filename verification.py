@@ -14,6 +14,7 @@ import leadfinder as lf
 import browser_session
 import organizer
 import intelligence
+import connections
 from contacts import WebClient, dns_txt_status, mail_domain_status, now
 
 TASK_LOCK = threading.Lock()
@@ -424,6 +425,42 @@ def _run(task, cancel):
         latest["intelligence_summary"] = intelligence.compile_job(latest)
         latest.setdefault("stats", {})["emails"] = sum(bool(row.get("email")) for row in organized_rows)
         engine.save(latest)
+        sheet_sync = {"google_sheet_status": "not_connected"}
+        google = next(
+            (
+                item
+                for item in connections.statuses().get("providers", [])
+                if item.get("id") == "google_sheets"
+            ),
+            {},
+        )
+        if google.get("connected"):
+            try:
+                synced = connections.sync_job_sheet(latest)
+                sheet_sync = {
+                    "google_sheet_status": "synced",
+                    "google_sheet_url": synced.get("url", ""),
+                    "google_sheet_worksheet": (synced.get("worksheets") or [""])[0],
+                    "google_sheet_rows": synced.get("rows", 0),
+                }
+                _event(
+                    task["params"]["job_id"],
+                    "info",
+                    "Google Sheets refreshed after verification",
+                    worksheet=sheet_sync["google_sheet_worksheet"],
+                    rows=sheet_sync["google_sheet_rows"],
+                )
+            except Exception as exc:
+                sheet_sync = {
+                    "google_sheet_status": "error",
+                    "google_sheet_error": str(exc)[:300],
+                }
+                _event(
+                    task["params"]["job_id"],
+                    "warning",
+                    "Google Sheets refresh failed after verification",
+                    error=str(exc)[:300],
+                )
         if organization.get("ai_error"):
             _event(task["params"]["job_id"], "warning", "Email classification AI unavailable", error=organization["ai_error"])
         reports = [json.loads(row.get("verification") or "{}") for row in latest.get("rows", [])]
@@ -442,6 +479,7 @@ def _run(task, cancel):
             "chrome_social_candidates": sum(len(r.get("social_discovery", {}).get("candidates", [])) for r in complete),
             "chrome_manual_checkpoints": sum(str(r.get("social_discovery", {}).get("status", "")).startswith("manual_checkpoint") for r in complete),
             "market_signal_candidates": sum(len(r.get("market_signals", {}).get("candidates", [])) for r in complete),
+            **sheet_sync,
         }
         task.update(
             status="cancelled" if cancel.is_set() else "complete",

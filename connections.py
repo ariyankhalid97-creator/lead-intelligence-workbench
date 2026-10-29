@@ -436,6 +436,29 @@ SHEET_COLUMNS = (
     "updated_at",
 )
 
+EMPLOYEE_SHEET_COLUMNS = (
+    "company_name",
+    "company_linkedin",
+    "employee_name",
+    "title",
+    "headline",
+    "role_group",
+    "seniority",
+    "outreach_priority",
+    "role_tags",
+    "title_status",
+    "employee_linkedin",
+    "evidence_url",
+    "basis",
+    "observed_at",
+)
+
+
+def _sheet_cell(value, limit: int = 3000) -> str:
+    """Keep Sheets values literal and bounded, including hostile page text."""
+    text = re.sub(r"[\r\n\t]+", " ", str(value or "")).strip()[:limit]
+    return "'" + text if text.lstrip().startswith(("=", "+", "-", "@")) else text
+
 
 def _safe_sheet_title(value: str, used: set[str]) -> str:
     base = re.sub(r"[\\/:?*\[\]]+", " - ", str(value or "")).strip(" ' -")
@@ -465,7 +488,7 @@ def _rows_for_sheet(records: list[dict], collection: str, niche: str = "", updat
         seen.add(signature)
         values.append(
             [
-                re.sub(r"[\r\n\t]+", " ", str(row.get(column, "") or ""))[:3000]
+                _sheet_cell(row.get(column, ""))
                 for column in SHEET_COLUMNS
             ]
         )
@@ -510,7 +533,12 @@ def job_sheet_snapshot(job: dict) -> dict:
     params = job.get("params") if isinstance(job.get("params"), dict) else {}
     offer = str(params.get("offer_title") or "").strip()
     segment = str(params.get("offer_segment_label") or params.get("niche") or "Leads").strip()
-    title = " - ".join(part for part in (offer, segment) if part) or segment
+    location = str(params.get("location") or "").strip()
+    title = (
+        " - ".join(part for part in (offer, segment) if part)
+        if offer
+        else " · ".join(part for part in (segment, location) if part)
+    ) or segment
     rows = [row for row in job.get("rows", []) if isinstance(row, dict)]
     return {
         "records": [],
@@ -532,12 +560,54 @@ def sync_job_sheet(job: dict) -> dict:
     return sync_sheet(job_sheet_snapshot(job))
 
 
-def sync_sheet(snapshot: dict) -> dict:
+def _employee_sheet_tab(job: dict) -> tuple[str, list[list[str]]]:
+    params = job.get("params") if isinstance(job.get("params"), dict) else {}
+    niche = str(params.get("niche") or "Research").strip()
+    location = str(params.get("location") or "").strip()
+    title = _safe_sheet_title(
+        " · ".join(part for part in (niche, location, "Employees") if part),
+        set(),
+    )
+    deduplicated: dict[str, dict] = {}
+    for row in job.get("employees", []):
+        if not isinstance(row, dict):
+            continue
+        url = str(row.get("employee_linkedin") or "").casefold().rstrip("/")
+        if url and url not in deduplicated:
+            deduplicated[url] = row
+    employees = list(deduplicated.values())
+    priority_order = {"high": 0, "medium": 1, "low": 2}
+    employees.sort(
+        key=lambda row: (
+            priority_order.get(str(row.get("outreach_priority") or "low"), 3),
+            str(row.get("role_group") or "other").casefold(),
+            str(row.get("company_name") or "").casefold(),
+            str(row.get("employee_name") or "").casefold(),
+        )
+    )
+    values = [list(EMPLOYEE_SHEET_COLUMNS)]
+    for row in employees[:5000]:
+        url = str(row.get("employee_linkedin") or "").casefold().rstrip("/")
+        if not url:
+            continue
+        values.append(
+            [
+                _sheet_cell(
+                    ", ".join(row.get(column, []))
+                    if column == "role_tags" and isinstance(row.get(column), list)
+                    else row.get(column, "")
+                )
+                for column in EMPLOYEE_SHEET_COLUMNS
+            ]
+        )
+    return title, values
+
+
+def _sync_tabs(tabs: list[tuple[str, list[list[str]]]]) -> dict:
     token = _google_access_token()
     config = _read("google_sheets")
     headers = {"Authorization": f"Bearer {token}"}
     spreadsheet_id = str(config.get("spreadsheet_id") or "")
-    tabs = _sheet_tabs(snapshot)
     created_now = False
     if not spreadsheet_id:
         created = _json_request(
@@ -598,3 +668,14 @@ def sync_sheet(snapshot: dict) -> dict:
         "updated_cells": updated_cells,
         "worksheets": [title for title, _ in tabs],
     }
+
+
+def sync_sheet(snapshot: dict) -> dict:
+    return _sync_tabs(_sheet_tabs(snapshot))
+
+
+def sync_employee_sheet(job: dict) -> dict:
+    """Create or refresh one employee-profile worksheet for a saved run."""
+    if not isinstance(job, dict):
+        raise ValueError("Choose a valid saved research job")
+    return _sync_tabs([_employee_sheet_tab(job)])

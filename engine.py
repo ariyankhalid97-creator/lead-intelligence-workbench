@@ -17,6 +17,7 @@ from contextlib import contextmanager
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict
 from pathlib import Path
+from urllib.parse import urlparse
 
 import leadfinder as lf
 import connections
@@ -135,6 +136,7 @@ def validate(params):
         "research_platforms",
         "prefer_independent",
         "live_sheet_sync",
+        "continue_previous",
     ):
         if key in params and not isinstance(params[key], bool):
             raise ValueError(f"{key} must be true or false")
@@ -215,8 +217,111 @@ def validate(params):
         "offer_title": offer_title,
         "offer_segment_label": offer_segment_label,
         "live_sheet_sync": params.get("live_sheet_sync", False),
+        "continue_previous": params.get("continue_previous", True),
         "reference_ids": reference_ids,
     }
+
+
+def _continuation_signature(params: dict) -> str:
+    """Stable scope identity for automatic next-batch discovery."""
+    locations = sorted(
+        re.sub(r"\s+", " ", str(item)).strip().casefold()
+        for item in params.get("locations", [])
+        if str(item).strip()
+    )
+    scope = {
+        "niche": re.sub(r"\s+", " ", str(params.get("niche", ""))).strip().casefold(),
+        "locations": locations,
+        "country": str(params.get("country", "manual")).casefold(),
+        "target": str(params.get("target", "both")).casefold(),
+        "coverage": str(params.get("coverage", "exact")).casefold(),
+    }
+    return json.dumps(scope, sort_keys=True, separators=(",", ":"))
+
+
+def _lead_identity_tokens(value) -> set[str]:
+    """Cross-provider identities used only to suppress earlier search batches."""
+    row = value if isinstance(value, dict) else asdict(value)
+    tokens: set[str] = set()
+    source = str(row.get("source", "")).strip().casefold()
+    source_id = str(row.get("source_id", "")).strip().casefold()
+    if source_id:
+        tokens.add(f"source:{source}:{source_id}")
+        # Google Maps place keys remain stable when the query or URL parameters change.
+        if source == "google_maps_browser":
+            tokens.add(f"maps:{source_id}")
+    for field in ("source_url", "profile_url"):
+        raw = str(row.get(field, "")).strip()
+        if raw:
+            parsed = urlparse(raw)
+            if parsed.netloc and parsed.path:
+                tokens.add(
+                    f"url:{parsed.netloc.casefold().removeprefix('www.')}:{parsed.path.rstrip('/').casefold()}"
+                )
+    website = lf.normalize_website(str(row.get("website", "")))
+    host = urlparse(website).netloc.casefold().removeprefix("www.")
+    phone = re.sub(r"\D", "", str(row.get("phone", "")))[-10:]
+    name = lf.normalize_business_name(
+        str(row.get("name", "")), str(row.get("city", ""))
+    ).casefold()
+    city = re.sub(r"\W+", "", str(row.get("city", "")).casefold())
+    address = re.sub(r"\W+", "", str(row.get("address", "")).casefold())
+    if phone and len(phone) >= 7:
+        tokens.add(f"phone:{phone}")
+    if host:
+        tokens.add(f"domain-name:{host}:{name}")
+    if name and address:
+        tokens.add(f"name-address:{name}:{address}")
+    elif name and city:
+        tokens.add(f"name-city:{name}:{city}")
+    return tokens
+
+
+def _continuation_context(params: dict) -> dict:
+    context = {
+        "enabled": bool(params.get("continue_previous", True)),
+        "signature": _continuation_signature(params),
+        "batch": 1,
+        "prior_job_ids": [],
+        "previously_collected": 0,
+    }
+    if not context["enabled"]:
+        return context
+    historical_tokens: set[str] = set()
+    with connection() as conn:
+        rows = conn.execute(
+            "SELECT id,payload FROM jobs ORDER BY updated_at DESC LIMIT 200"
+        ).fetchall()
+    for job_id, payload in rows:
+        try:
+            prior = json.loads(payload)
+        except (TypeError, ValueError):
+            continue
+        if _continuation_signature(prior.get("params", {})) != context["signature"]:
+            continue
+        unique_rows = []
+        for row in prior.get("rows", []):
+            if not isinstance(row, dict):
+                continue
+            tokens = _lead_identity_tokens(row)
+            if not tokens or tokens & historical_tokens:
+                continue
+            historical_tokens.update(tokens)
+            unique_rows.append(row)
+        if unique_rows:
+            context["prior_job_ids"].append(job_id)
+            context["previously_collected"] += len(unique_rows)
+    context["batch"] = len(context["prior_job_ids"]) + 1
+    return context
+
+
+def _continuation_rows(context: dict) -> list[dict]:
+    rows: list[dict] = []
+    for job_id in context.get("prior_job_ids", [])[:200]:
+        prior = get_job(job_id, events=False)
+        if prior:
+            rows.extend(row for row in prior.get("rows", []) if isinstance(row, dict))
+    return rows
 
 
 def save(job):
@@ -283,6 +388,7 @@ def history():
                 "count",
                 "message",
                 "elapsed",
+                "continuation",
             )
         }
         for j in jobs
@@ -441,7 +547,13 @@ def start(params):
         "elapsed": 0,
         "resume_checkpoint": {"completed_locations": []},
         "resume_count": 0,
+        "continuation": _continuation_context(params),
     }
+    if job["continuation"]["previously_collected"]:
+        job["message"] = (
+            f"Preparing continuation batch {job['continuation']['batch']} · "
+            f"skipping {job['continuation']['previously_collected']} previously collected businesses"
+        )
     job["strategy"] = strategy(job["plan"], params)
     save(job)
     threading.Thread(target=run, args=(job, cancel, pause), daemon=True).start()
@@ -667,6 +779,43 @@ def run(job, cancel, pause=None, resume=False):
         for row in job.get("rows", [])
         if resume and isinstance(row, dict)
     ]
+    continuation = job.setdefault(
+        "continuation",
+        {
+            "enabled": False,
+            "batch": 1,
+            "prior_job_ids": [],
+            "previously_collected": 0,
+        },
+    )
+    previous_rows = _continuation_rows(continuation)
+    browser_history_rows = [
+        *previous_rows,
+        *(
+            [row for row in job.get("rows", []) if isinstance(row, dict)]
+            if resume
+            else []
+        ),
+    ]
+    historical_tokens = {
+        token for row in previous_rows for token in _lead_identity_tokens(row)
+    }
+    historical_map_keys = {
+        str(row.get("source_id", "")).strip().casefold()
+        for row in browser_history_rows
+        if str(row.get("source", "")).casefold() == "google_maps_browser"
+        and str(row.get("source_id", "")).strip()
+    }
+    historical_query_counts: dict[str, int] = {}
+    historical_location_counts: dict[str, int] = {}
+    for row in browser_history_rows:
+        query = str(row.get("discovery_query", "")).strip()
+        location = str(row.get("search_location") or row.get("city") or "").strip().casefold()
+        if query:
+            historical_query_counts[query] = historical_query_counts.get(query, 0) + 1
+        if location:
+            historical_location_counts[location] = historical_location_counts.get(location, 0) + 1
+    skipped_previous = 0
     run_events = []
 
     def persist(**changes):
@@ -763,6 +912,11 @@ def run(job, cancel, pause=None, resume=False):
             persist(message=message, status="waiting")
 
     def checkpoint(lead):
+        nonlocal skipped_previous
+        if historical_tokens and _lead_identity_tokens(lead) & historical_tokens:
+            with lock:
+                skipped_previous += 1
+            return
         with lock:
             leads.append(lead)
             merged = lf.deduplicate(leads)
@@ -774,6 +928,7 @@ def run(job, cancel, pause=None, resume=False):
             )
 
     def provider(name, fn):
+        nonlocal skipped_previous
         t = time.monotonic()
         emit(name, "info", "Provider started")
         with lock:
@@ -784,7 +939,17 @@ def run(job, cancel, pause=None, resume=False):
             persist()
         try:
             found = fn()
+            skipped_here = 0
+            if historical_tokens:
+                fresh = []
+                for lead in found:
+                    if _lead_identity_tokens(lead) & historical_tokens:
+                        skipped_here += 1
+                    else:
+                        fresh.append(lead)
+                found = fresh
             with lock:
+                skipped_previous += skipped_here
                 # Browser pushes checkpoints as it reads; merge handles repeats.
                 leads.extend(found)
                 job["providers"][name] = {
@@ -805,6 +970,7 @@ def run(job, cancel, pause=None, resume=False):
                 "info",
                 "Provider complete",
                 count=len(found),
+                skipped_previous=skipped_here,
                 seconds=round(time.monotonic() - t, 1),
             )
         except Exception as exc:
@@ -847,6 +1013,15 @@ def run(job, cancel, pause=None, resume=False):
             source=params["source"],
             limit=params["limit"],
         )
+        if continuation.get("previously_collected"):
+            emit(
+                "quality_controller",
+                "info",
+                "Continuation memory loaded",
+                batch=continuation.get("batch", 1),
+                previously_collected=continuation.get("previously_collected", 0),
+                prior_runs=len(continuation.get("prior_job_ids", [])),
+            )
         source = params["source"]
         emit(
             "research_strategist",
@@ -969,6 +1144,12 @@ def run(job, cancel, pause=None, resume=False):
                     if q["channel"] == "browser" and q["location"] == location
                 ],
             }
+            prior_location_count = historical_location_counts.get(
+                location.strip().casefold(), 0
+            )
+            discovery_fetch_limit = min(
+                500, per_location_limit + prior_location_count
+            )
             tasks = []
             with ThreadPoolExecutor(max_workers=7) as pool:
                 if source in ("osm", "hybrid"):
@@ -979,7 +1160,7 @@ def run(job, cancel, pause=None, resume=False):
                             lambda: lf.osm_search(
                                 search_plan["category"],
                                 location,
-                                per_location_limit,
+                                discovery_fetch_limit,
                                 emit,
                             ),
                         )
@@ -990,7 +1171,7 @@ def run(job, cancel, pause=None, resume=False):
                             provider,
                             "web",
                             lambda: web_search(
-                                local_plan, location, per_location_limit, cancel, emit
+                                local_plan, location, discovery_fetch_limit, cancel, emit
                             ),
                         )
                     )
@@ -1000,7 +1181,7 @@ def run(job, cancel, pause=None, resume=False):
                             provider,
                             "wikidata",
                             lambda: public_sources.wikidata_search(
-                                local_plan, location, per_location_limit, emit
+                                local_plan, location, discovery_fetch_limit, emit
                             ),
                         )
                     )
@@ -1011,11 +1192,11 @@ def run(job, cancel, pause=None, resume=False):
                             "acra",
                             lambda: public_sources.acra_secondary_enrichment(
                                 public_sources.acra_search(
-                                    local_plan, location, per_location_limit, emit
+                                    local_plan, location, discovery_fetch_limit, emit
                                 ),
                                 params["niche"],
                                 location,
-                                per_location_limit,
+                                discovery_fetch_limit,
                                 cancel,
                                 emit,
                             ),
@@ -1027,7 +1208,7 @@ def run(job, cancel, pause=None, resume=False):
                             provider,
                             "google_places",
                             lambda: public_sources.google_places_search(
-                                local_plan, location, per_location_limit, emit
+                                local_plan, location, discovery_fetch_limit, emit
                             ),
                         )
                     )
@@ -1038,11 +1219,11 @@ def run(job, cancel, pause=None, resume=False):
                             "npi",
                             lambda: public_sources.npi_secondary_enrichment(
                                 public_sources.npi_search(
-                                    params["niche"], location, per_location_limit, emit
+                                    params["niche"], location, discovery_fetch_limit, emit
                                 ),
                                 params["niche"],
                                 location,
-                                per_location_limit,
+                                discovery_fetch_limit,
                                 cancel,
                                 emit,
                             ),
@@ -1063,6 +1244,11 @@ def run(job, cancel, pause=None, resume=False):
                                 emit,
                                 checkpoint,
                                 ROOT / "data" / "chrome-profile",
+                                {
+                                    "excluded_map_keys": historical_map_keys,
+                                    "query_counts": historical_query_counts,
+                                    "batch": continuation.get("batch", 1),
+                                },
                             ),
                         )
                     )
@@ -1072,7 +1258,7 @@ def run(job, cancel, pause=None, resume=False):
                             provider,
                             "local_api",
                             lambda: lf.maps_search(
-                                params["niche"], location, per_location_limit
+                                params["niche"], location, discovery_fetch_limit
                             ),
                         )
                     )
@@ -1087,7 +1273,12 @@ def run(job, cancel, pause=None, resume=False):
                 count=len(lf.deduplicate(leads)),
             )
         discovery_merges = []
-        rows = lf.deduplicate(leads, merge_log=discovery_merges)
+        rows = [
+            row
+            for row in lf.deduplicate(leads, merge_log=discovery_merges)
+            if not historical_tokens
+            or not (_lead_identity_tokens(row) & historical_tokens)
+        ]
         if discovery_merges:
             emit(
                 "quality_controller",
@@ -1247,7 +1438,11 @@ def run(job, cancel, pause=None, resume=False):
         diagnostic = ""
         if not rows:
             diagnostic = (
-                "No selected source supplied matching businesses. "
+                (
+                    f"No new businesses remained after excluding {continuation.get('previously_collected', 0)} businesses collected by earlier matching runs. The available source may be exhausted; disable continuation only when you intentionally want to refresh earlier leads. "
+                    if continuation.get("previously_collected")
+                    else "No selected source supplied matching businesses. "
+                )
                 + (
                     "This niche has no dedicated OSM category. Try Chrome Maps, additional phrases, or paste business website URLs. "
                     if not search_plan["osm_mapped"]
@@ -1281,11 +1476,23 @@ def run(job, cancel, pause=None, resume=False):
             maps_stop_events=len(causes["maps"]["stop_events"]),
             merged_count=causes["deduplication"]["merged_count"],
         )
+        continuation.update(
+            new_count=len(rows),
+            skipped_during_run=skipped_previous,
+            source_exhausted=len(rows) < params["limit"],
+        )
+        result_message = (
+            f"{len(rows)} new businesses collected · continuation batch {continuation.get('batch', 1)}"
+            if continuation.get("previously_collected") and rows
+            else f"{len(rows)} businesses collected"
+            if rows
+            else "No new matching businesses returned"
+            if continuation.get("previously_collected")
+            else "No matching businesses returned"
+        )
         persist(
             status=status,
-            message=f"{len(rows)} businesses collected"
-            if rows
-            else "No matching businesses returned",
+            message=result_message,
             progress=100,
             rows=[asdict(x) for x in rows],
             count=len(rows),

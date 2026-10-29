@@ -466,7 +466,16 @@ def web_search(search_plan, location, limit, cancel, emit):
     return rows
 
 
-def browser_maps(search_plan, location, limit, cancel, emit, checkpoint, profile: Path):
+def browser_maps(
+    search_plan,
+    location,
+    limit,
+    cancel,
+    emit,
+    checkpoint,
+    profile: Path,
+    continuation=None,
+):
     from playwright.sync_api import sync_playwright, TimeoutError as BrowserTimeout
     import browser_session
 
@@ -499,8 +508,15 @@ def browser_maps(search_plan, location, limit, cancel, emit, checkpoint, profile
         except Exception:
             BROWSER_LOCK.release()
             raise
+    continuation = continuation or {}
     rows = []
-    seen = set()
+    excluded_map_keys = {
+        str(item).strip().casefold()
+        for item in continuation.get("excluded_map_keys", set())
+        if str(item).strip()
+    }
+    seen = set(excluded_map_keys)
+    query_counts = continuation.get("query_counts", {})
 
     def check_pause(page):
         def needs_action():
@@ -599,12 +615,15 @@ def browser_maps(search_plan, location, limit, cancel, emit, checkpoint, profile
                     if cancel.is_set():
                         break
                     query = query_plan["query"]
+                    prior_query_count = int(query_counts.get(query, 0) or 0)
                     target = len(rows) + quota
                     emit(
                         "browser",
                         "info",
                         "Opening Google Maps in dedicated Chrome",
                         query=query,
+                        continuation_batch=int(continuation.get("batch", 1) or 1),
+                        previously_collected_for_query=prior_query_count,
                     )
                     page.goto(
                         "https://www.google.com/maps/search/" + quote(query) + "?hl=en",
@@ -638,9 +657,10 @@ def browser_maps(search_plan, location, limit, cancel, emit, checkpoint, profile
                     stale = 0
                     scroll_cycles = 0
                     stop_reason = "iteration_limit"
-                    stop_detail = "Reached the 30-scroll safety limit"
-                    link_threshold = max(quota * 2, 5)
-                    for _ in range(30):
+                    scroll_limit = min(60, 30 + prior_query_count)
+                    stop_detail = f"Reached the {scroll_limit}-scroll safety limit"
+                    link_threshold = max((quota + prior_query_count) * 2, 5)
+                    for _ in range(scroll_limit):
                         scroll_cycles += 1
                         if cancel.is_set():
                             stop_reason = "cancelled"
@@ -685,6 +705,7 @@ def browser_maps(search_plan, location, limit, cancel, emit, checkpoint, profile
                         links_collected=len(links),
                         stale_checks=stale,
                         requested_query_quota=quota,
+                        previously_collected_for_query=prior_query_count,
                         link_threshold=link_threshold,
                     )
                     emit(
@@ -712,6 +733,7 @@ def browser_maps(search_plan, location, limit, cancel, emit, checkpoint, profile
                             if "!1s" in item["url"]
                             else item["url"].split("?")[0]
                         )
+                        key = key.casefold()
                         if key in seen:
                             continue
                         seen.add(key)

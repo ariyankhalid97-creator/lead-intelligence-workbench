@@ -22,6 +22,8 @@ One search can move through the complete pipeline without changing tabs:
 
 Searches have durable checkpoints. Pause, continue, application-restart recovery, provider failures, CAPTCHA waits, and partial results remain visible in the same saved run.
 
+Repeated searches for the same niche and locations continue after earlier batches by default. The app loads identities from matching saved runs, scrolls Maps beyond previously observed listings, excludes cross-source repeats, and saves only newly discovered businesses in the new run. The search form includes a clear opt-out for intentional refreshes of earlier leads; source exhaustion is recorded instead of silently returning the first batch again.
+
 ## Main capabilities
 
 ### Discovery and source planning
@@ -75,7 +77,9 @@ After discovery, the verification stage can type an exact public Google query fo
 "Business Name" LinkedIn
 ```
 
-Only public `linkedin.com/company/...` candidates are accepted. A matching company URL is saved in the lead, research library, exports, and Google Sheets. The app provides a separate manual decision-maker search link; it does not scrape authenticated personal profiles. Google or LinkedIn security checkpoints are never bypassed.
+Only `linkedin.com/company/...` candidates are accepted as company matches. A matching company URL is saved in the lead, research library, exports, and Google Sheets. Verification now refreshes the current lead worksheet automatically so newly resolved LinkedIn URLs are not left behind.
+
+An optional, separately started employee stage can reuse the dedicated LinkedIn login to inspect verified company People pages. It retains only visibly listed professional names, headlines, profile URLs, company evidence, and observation time, deduplicates by profile URL, and writes them to a separate worksheet. Evidence-derived rules normalize visible job titles and add role group, seniority, outreach-priority, and decision-maker tags without inventing a title when LinkedIn does not show one. The run is bounded to 100 companies, 100 visible profiles per company, and 5,000 retained profiles. It never opens private contact data, sends invitations or messages, or bypasses Google or LinkedIn security checkpoints.
 
 ## Local AI
 
@@ -106,7 +110,7 @@ http://127.0.0.1:8788
 
 Authorization uses PKCE, a short-lived state value, and the same callback during the token exchange. A `redirect_uri_mismatch` error normally means a Web client or a different loopback address was used; create and save a Desktop app client instead.
 
-Each organized collection can receive its own sanitized worksheet title. Optional live sync updates the current worksheet while results arrive, then performs a final sync after verification and organization.
+Each organized collection can receive its own sanitized worksheet title. Optional live sync updates the current worksheet while results arrive, and second-round verification refreshes it after company LinkedIn URLs and other evidence are saved. Employee discovery creates or refreshes a separate `Employees` worksheet in the same app-owned spreadsheet.
 
 ## Zoho outreach
 

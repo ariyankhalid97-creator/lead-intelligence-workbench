@@ -8,6 +8,7 @@ import re
 import subprocess
 import threading
 import time
+from datetime import datetime
 from pathlib import Path
 from urllib.parse import quote, urlparse, parse_qs
 from urllib.request import Request, urlopen
@@ -307,6 +308,214 @@ def _canonical_linkedin_company_url(value: str) -> str:
         return ""
     slug = match.group(1).strip()
     return f"https://www.linkedin.com/company/{slug}/" if slug else ""
+
+
+def _canonical_linkedin_person_url(value: str) -> str:
+    """Return a canonical LinkedIn member URL for a visible `/in/` link."""
+    try:
+        parsed = urlparse(str(value or ""))
+    except ValueError:
+        return ""
+    host = (parsed.hostname or "").casefold().removeprefix("www.")
+    match = re.match(r"^/in/([^/?#]+)", parsed.path or "", re.I)
+    if host != "linkedin.com" or not match:
+        return ""
+    slug = match.group(1).strip()
+    return f"https://www.linkedin.com/in/{slug}/" if slug else ""
+
+
+_LINKEDIN_DEGREE = re.compile(
+    r"^(.*?)\s*[·•]\s*(?:1st|2nd|3rd)(?:\+)?\s*(.*)$", re.I
+)
+
+
+def _linkedin_person_card(anchor_text: str, context: str) -> tuple[str, str]:
+    """Separate a visible member name/headline from LinkedIn UI labels."""
+    ignored = {
+        "linkedin",
+        "view profile",
+        "connect",
+        "message",
+        "follow",
+        "pending",
+    }
+    lines = [
+        re.sub(r"\s+", " ", line).strip()
+        for line in str(context or "").splitlines()
+    ]
+    lines = [line for line in lines if line and line.casefold() not in ignored]
+    raw_name = re.sub(r"\s+", " ", str(anchor_text or "")).strip()
+    name = raw_name
+    headline_candidates = []
+    degree_match = _LINKEDIN_DEGREE.match(raw_name)
+    if degree_match:
+        name = degree_match.group(1).strip()
+        if degree_match.group(2).strip():
+            headline_candidates.append(degree_match.group(2).strip())
+    if not name or len(name) > 120 or name.casefold() in ignored:
+        name = ""
+    for line in lines:
+        match = _LINKEDIN_DEGREE.match(line)
+        if match:
+            prefix, suffix = match.group(1).strip(), match.group(2).strip()
+            if not name and prefix and len(prefix) <= 120:
+                name = prefix
+            if suffix:
+                headline_candidates.append(suffix)
+            continue
+        if re.fullmatch(r"[·•]?\s*(?:1st|2nd|3rd)(?:\+)?", line, re.I):
+            continue
+        if line.casefold() == name.casefold() or line.casefold() == raw_name.casefold():
+            continue
+        if re.search(r"^(?:\d[\d,.]*\s+)?(?:followers?|connections?)$", line, re.I):
+            continue
+        headline_candidates.append(line)
+    headline = next(
+        (
+            item
+            for item in headline_candidates
+            if item and item.casefold() != name.casefold()
+        ),
+        "",
+    )
+    return name[:120], headline[:300]
+
+
+def _linkedin_checkpoint_detected(url: str, body: str) -> bool:
+    """Detect an actual LinkedIn challenge, not ordinary words like company names."""
+    try:
+        path = (urlparse(str(url or "")).path or "").casefold()
+    except ValueError:
+        path = ""
+    if re.search(r"/(?:checkpoint|challenge|captcha)(?:/|$)", path):
+        return True
+    visible = re.sub(r"\s+", " ", str(body or "")).casefold()
+    return bool(
+        re.search(
+            r"\b(?:verify you are human|security verification|quick security check|complete (?:a|the) security check|unusual activity detected|enter the characters you see|captcha)\b",
+            visible,
+        )
+    )
+
+
+def discover_linkedin_employees(
+    company_url: str,
+    company_name: str,
+    limit: int = 25,
+    cancel=None,
+) -> dict:
+    """Collect bounded, visible professional profiles from a company People page.
+
+    The user must already be signed in to the dedicated local Chrome profile.
+    Only the name, visible headline/context, profile URL, company evidence and
+    observation time are retained. Challenges and authentication walls remain
+    open for manual action; this function never attempts to bypass them.
+    """
+    company_url = _canonical_linkedin_company_url(company_url)
+    company_name = re.sub(r"\s+", " ", str(company_name or "")).strip()[:180]
+    limit = max(1, min(int(limit or 25), 100))
+    if not company_url:
+        return {"status": "invalid_company_url", "profiles": [], "error": "A verified LinkedIn company URL is required"}
+    if cancel and cancel.is_set():
+        return {"status": "cancelled", "profiles": []}
+    with SEARCH_LOCK:
+        checkpoint = search_checkpoint_status()
+        if checkpoint["paused"]:
+            return {
+                "status": "manual_checkpoint",
+                "profiles": [],
+                "browser_checkpoint": checkpoint["reason"],
+            }
+        keep_open = False
+        try:
+            if not running():
+                open_service("linkedin")
+            from playwright.sync_api import sync_playwright
+
+            pw = sync_playwright().start()
+            browser = pw.chromium.connect_over_cdp(DEBUG_BASE)
+            context = browser.contexts[0]
+            page = context.new_page()
+            people_url = company_url.rstrip("/") + "/people/"
+            try:
+                page.goto(people_url, wait_until="domcontentloaded", timeout=22000)
+                page.wait_for_timeout(1200)
+                body = page.locator("body").inner_text(timeout=4000)[:12000]
+                current_url = page.url
+                if _linkedin_checkpoint_detected(current_url, body):
+                    reason = "LinkedIn security checkpoint is open in the dedicated Chrome profile; complete it manually, then resume employee discovery"
+                    _pause_public_search(reason)
+                    keep_open = True
+                    return {"status": "manual_checkpoint", "profiles": [], "browser_checkpoint": reason, "people_url": people_url}
+                if re.search(r"/login|/authwall|sign in to linkedin|join linkedin", current_url + " " + body, re.I):
+                    keep_open = True
+                    return {
+                        "status": "login_required",
+                        "profiles": [],
+                        "error": "Sign in to LinkedIn in the dedicated Chrome profile, then resume employee discovery",
+                        "people_url": people_url,
+                    }
+                observed: dict[str, dict] = {}
+                stagnant = 0
+                for _ in range(10):
+                    if cancel and cancel.is_set():
+                        return {"status": "cancelled", "profiles": list(observed.values()), "people_url": people_url}
+                    anchors = page.locator('a[href*="linkedin.com/in/"], a[href^="/in/"]').evaluate_all(
+                        """els => els.map(a => ({
+                          href: a.href || '',
+                          text: (a.innerText || a.textContent || '').trim(),
+                          context: ((a.closest('li') || a.closest('[data-view-name]') || a.parentElement)?.innerText || '').trim()
+                        }))"""
+                    )
+                    before = len(observed)
+                    for anchor in anchors:
+                        url = _canonical_linkedin_person_url(anchor.get("href", ""))
+                        if not url:
+                            continue
+                        name, headline = _linkedin_person_card(
+                            anchor.get("text", ""), anchor.get("context", "")
+                        )
+                        if not name:
+                            continue
+                        candidate = {
+                            "company_name": company_name,
+                            "company_linkedin": company_url,
+                            "employee_name": name[:120],
+                            "headline": headline,
+                            "employee_linkedin": url,
+                            "evidence_url": people_url,
+                            "basis": "visible_linkedin_company_people_page",
+                            "observed_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+                        }
+                        existing = observed.get(url)
+                        if not existing:
+                            observed[url] = candidate
+                        elif headline and (
+                            not existing.get("headline")
+                            or len(headline) > len(str(existing.get("headline", "")))
+                        ):
+                            observed[url] = {**existing, **candidate}
+                        if len(observed) >= limit:
+                            break
+                    if len(observed) >= limit:
+                        break
+                    stagnant = stagnant + 1 if len(observed) == before else 0
+                    if stagnant >= 2:
+                        break
+                    page.mouse.wheel(0, 1700)
+                    page.wait_for_timeout(900)
+                return {
+                    "status": "complete" if observed else "no_visible_profiles",
+                    "profiles": list(observed.values())[:limit],
+                    "people_url": people_url,
+                    "note": "Only profiles visibly associated with the company People page were retained.",
+                }
+            finally:
+                if not keep_open:
+                    page.close()
+                pw.stop()
+        except Exception as exc:
+            return {"status": "failed", "profiles": [], "error": str(exc)[:300]}
 
 
 def _google_linkedin_company(name: str, cancel=None) -> dict:

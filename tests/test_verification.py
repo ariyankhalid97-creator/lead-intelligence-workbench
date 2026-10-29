@@ -164,13 +164,33 @@ class VerificationTests(unittest.TestCase):
             "total": 0,
             "summary": {},
         }
-        with patch.object(verification, "_verify", side_effect=fake_verify):
+        with (
+            patch.object(verification, "_verify", side_effect=fake_verify),
+            patch.object(
+                verification.connections,
+                "statuses",
+                return_value={
+                    "providers": [{"id": "google_sheets", "connected": True}]
+                },
+            ),
+            patch.object(
+                verification.connections,
+                "sync_job_sheet",
+                return_value={
+                    "url": "https://docs.google.com/spreadsheets/d/test/edit",
+                    "worksheets": ["Example niche · Dallas"],
+                    "rows": 1,
+                },
+            ) as sheet_sync,
+        ):
             verification._run(task, threading.Event())
         saved = engine.get_job(job["id"], events=False)
         self.assertEqual(
             "https://www.linkedin.com/company/example-company/",
             saved["rows"][0]["linkedin"],
         )
+        sheet_sync.assert_called_once()
+        self.assertEqual("synced", task["summary"]["google_sheet_status"])
 
 
 if __name__ == "__main__":

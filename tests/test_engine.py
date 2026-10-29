@@ -3,6 +3,7 @@ import json
 import sqlite3
 import tempfile
 import sys
+from dataclasses import asdict
 from types import SimpleNamespace
 import threading
 import time
@@ -530,6 +531,20 @@ class QualityTests(unittest.TestCase):
             contacts.public_url("http://127.0.0.1/admin")
         with self.assertRaises(ValueError):
             contacts.public_url("file:///etc/passwd")
+        self.assertTrue(
+            engine.validate({"niche": "roofing", "location": "Dallas"})[
+                "continue_previous"
+            ]
+        )
+        self.assertFalse(
+            engine.validate(
+                {
+                    "niche": "roofing",
+                    "location": "Dallas",
+                    "continue_previous": False,
+                }
+            )["continue_previous"]
+        )
 
 
 class PipelineTests(unittest.TestCase):
@@ -686,6 +701,55 @@ class PipelineTests(unittest.TestCase):
         with patch.object(lf, "osm_search", side_effect=search):
             engine.run(job, threading.Event())
         self.assertEqual(2, engine.get_job(job["id"])["providers"]["osm"]["count"])
+
+    def test_repeated_scope_excludes_prior_batch_and_keeps_next_business(self):
+        prior = self.job("osm")
+        prior.update(
+            id="prior-job",
+            status="complete",
+            rows=[
+                asdict(
+                    lf.Lead(
+                        name="Already Collected Hood Cleaning",
+                        city="Dallas, Texas",
+                        search_location="Dallas, Texas",
+                        source="openstreetmap",
+                        source_id="old-place",
+                    )
+                )
+            ],
+            count=1,
+        )
+        engine.save(prior)
+        job = self.job("osm")
+        job["continuation"] = engine._continuation_context(job["params"])
+        engine.save(job)
+        self.assertEqual(1, job["continuation"]["previously_collected"])
+        self.assertEqual(2, job["continuation"]["batch"])
+
+        returned = [
+            lf.Lead(
+                name="Already Collected Hood Cleaning",
+                city="Dallas, Texas",
+                search_location="Dallas, Texas",
+                source="openstreetmap",
+                source_id="old-place",
+            ),
+            lf.Lead(
+                name="Next Hood Cleaning Company",
+                city="Dallas, Texas",
+                search_location="Dallas, Texas",
+                source="openstreetmap",
+                source_id="new-place",
+            ),
+        ]
+        with patch.object(lf, "osm_search", return_value=returned):
+            engine.run(job, threading.Event())
+        saved = engine.get_job(job["id"])
+        self.assertEqual(1, saved["count"])
+        self.assertEqual("Next Hood Cleaning Company", saved["rows"][0]["name"])
+        self.assertEqual(1, saved["continuation"]["new_count"])
+        self.assertIn("continuation batch 2", saved["message"])
 
     def test_library_recheck_keeps_geography_not_old_contacts_or_score(self):
         job = self.job("osm")

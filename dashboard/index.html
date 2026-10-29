@@ -347,6 +347,16 @@ Dallas, Texas</textarea>
                 ></label
               >
             </div>
+            <div class="check-row">
+              <input id="continuePrevious" type="checkbox" checked /><label
+                for="continuePrevious"
+                >Continue after earlier batches<small
+                  >Repeated searches skip businesses already collected for the
+                  same niche and locations, then keep scanning for the next
+                  batch. Turn this off only to refresh earlier leads.</small
+                ></label
+              >
+            </div>
             <div class="check-row linked-workflow-choice">
               <input id="linkedWorkflow" type="checkbox" checked /><label
                 for="linkedWorkflow"
@@ -1467,7 +1477,79 @@ Dallas, Texas</textarea>
             it does not prove a campaign is currently running. “Not verified”
             does not mean no ads exist.
           </p>
-          <div id="verificationList" class="verification-list"></div>
+          <section
+            class="card employee-discovery-card"
+            aria-labelledby="employeeDiscoveryHeading"
+          >
+            <div class="card-title">
+              <span class="step">03</span>
+              <div>
+                <h3 id="employeeDiscoveryHeading">LinkedIn employee worksheet</h3>
+                <p>
+                  After company LinkedIn URLs are verified, inspect their visible
+                  People pages and save sourced professional profile links in a
+                  separate Google Sheets worksheet.
+                </p>
+              </div>
+            </div>
+            <div class="employee-discovery-controls">
+              <label for="employeeCompanyLimit"
+                >Companies to check<input
+                  id="employeeCompanyLimit"
+                  type="number"
+                  min="1"
+                  max="100"
+                  value="100"
+              /></label>
+              <label for="employeePerCompany"
+                >Visible profiles per company<input
+                  id="employeePerCompany"
+                  type="number"
+                  min="1"
+                  max="100"
+                  value="100"
+              /></label>
+              <button id="startEmployeeDiscovery" class="primary" type="button">
+                Build employee worksheet
+              </button>
+              <button
+                id="resumeEmployeeDiscovery"
+                class="secondary hidden"
+                type="button"
+              >
+                Continue after browser check
+              </button>
+              <button
+                id="cancelEmployeeDiscovery"
+                class="ghost hidden"
+                type="button"
+              >
+                Stop
+              </button>
+            </div>
+            <p id="employeeDiscoveryStatus" class="notice" role="status">
+              Complete second-round verification first so company LinkedIn URLs
+              are available.
+            </p>
+            <progress
+              id="employeeDiscoveryProgress"
+              value="0"
+              max="100"
+              aria-label="Employee discovery progress"
+            ></progress>
+            <div id="employeeDiscoveryStats" class="chips"></div>
+            <div id="employeeDiscoveryPreview" class="employee-profile-preview"></div>
+            <p class="fine-print">
+              Uses the dedicated Chrome profile you signed into. It stores only
+              visible names, headlines, profile URLs, company evidence and
+              observation time. It does not open private data, send invitations,
+              message people, or bypass LinkedIn checkpoints.
+            </p>
+          </section>
+          <details class="verification-results-details">
+            <summary>Verified lead reports</summary>
+            <div id="verificationList" class="verification-list"></div>
+          </details>
         </div>
         <div id="diagnosticsPanel" class="diagnostics hidden">
           <div id="rootCauseSummary"></div>
