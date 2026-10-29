@@ -2,6 +2,12 @@
 
 ## 2.5.1 — 2026-10-29
 
+### Public project and documentation
+
+- Rewrite the public README around the complete product: discovery, durable recovery, evidence provenance, local AI, verification, identity memory, monitoring, Sheets, LinkedIn-assisted research and approval-gated outreach.
+- Add a workflow demo, GitHub social-preview artwork, structured issue forms, pull-request guidance, contribution and support documents, a code of conduct and a public roadmap.
+- Publish release notes and checksum guidance while keeping local leads, credentials, browser profiles, campaign content and diagnostics outside the repository.
+
 ### LinkedIn and Google Sheets continuity
 
 - Refresh the current lead worksheet automatically after second-round verification so newly resolved company LinkedIn URLs reach Sheets.

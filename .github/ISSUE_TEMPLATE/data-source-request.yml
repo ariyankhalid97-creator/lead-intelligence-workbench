@@ -1,0 +1,52 @@
+name: Data-source request
+description: Suggest an official API, registry, directory or public business source.
+title: "[Source]: "
+labels: ["data-source", "needs-triage"]
+body:
+  - type: input
+    id: source
+    attributes:
+      label: Source name and official URL
+      placeholder: "Example Registry — https://example.gov/registry"
+    validations:
+      required: true
+  - type: input
+    id: geography
+    attributes:
+      label: Countries or regions covered
+    validations:
+      required: true
+  - type: textarea
+    id: fields
+    attributes:
+      label: Public business fields available
+      description: List the fields and explain why they improve verification or discovery.
+    validations:
+      required: true
+  - type: dropdown
+    id: access
+    attributes:
+      label: Access model
+      options:
+        - Free official API
+        - Free public pages
+        - Registration required
+        - API key required
+        - Paid or licensed
+        - Unknown
+    validations:
+      required: true
+  - type: textarea
+    id: terms
+    attributes:
+      label: Terms, robots and rate-limit notes
+      description: Link the applicable official documentation.
+    validations:
+      required: true
+  - type: checkboxes
+    id: boundaries
+    attributes:
+      label: Access boundaries
+      options:
+        - label: The proposed use does not require bypassing authentication, CAPTCHAs, paywalls or access controls.
+          required: true

@@ -1,0 +1,56 @@
+name: Bug report
+description: Report a reproducible defect without sharing private lead data.
+title: "[Bug]: "
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Remove credentials, cookies, contact records and local file paths before submitting.
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      placeholder: "2.5.1"
+    validations:
+      required: true
+  - type: dropdown
+    id: installation
+    attributes:
+      label: Installation method
+      options:
+        - Windows installer
+        - Source checkout
+        - Portable build
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: What happened?
+      description: Describe the observed behavior and what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction steps
+      placeholder: |
+        1. Open...
+        2. Select...
+        3. Observe...
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Sanitized diagnostics
+      description: Paste only the relevant provider events after removing business contacts, credentials, cookies and local paths.
+      render: text
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Privacy check
+      options:
+        - label: I removed credentials, cookies, real contact records and private campaign content.
+          required: true

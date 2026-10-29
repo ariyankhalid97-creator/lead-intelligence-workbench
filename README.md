@@ -2,11 +2,29 @@
 
 ### Local-first business discovery, evidence-backed lead intelligence, and approval-gated outreach
 
+[![Latest release](https://img.shields.io/github/v/release/ariyankhalid97-creator/lead-intelligence-workbench?display_name=tag&sort=semver)](https://github.com/ariyankhalid97-creator/lead-intelligence-workbench/releases/latest)
+[![License: MIT](https://img.shields.io/badge/license-MIT-7c4d9e.svg)](LICENSE)
+[![Platform: Windows](https://img.shields.io/badge/platform-Windows-5d3f86.svg)](#install-on-windows)
+[![Local AI: Ollama](https://img.shields.io/badge/local%20AI-Ollama-b78be6.svg)](#local-ai)
+
 Lead Extractor is a free Windows desktop workspace that turns a niche and location into an organized research collection. It discovers public business records, enriches published contacts, verifies company evidence, consolidates duplicates, compiles local-AI intelligence, synchronizes approved data to Google Sheets, and prepares outreach for human review.
 
 The application runs locally. A paid AI key and subscription are not required.
 
+## See the workflow
+
+![Lead Extractor workflow demonstration](docs/launch-assets/lead-extractor-demo.gif)
+
+Enter a niche and location, choose the applicable public sources, retain evidence for every result, and continue with new batches instead of collecting the first page again.
+
+**[Download the latest Windows release](https://github.com/ariyankhalid97-creator/lead-intelligence-workbench/releases/latest)** · **[Read the setup guide](#install-on-windows)** · **[Request a data source](https://github.com/ariyankhalid97-creator/lead-intelligence-workbench/issues/new?template=data-source-request.yml)**
+
+<details>
+<summary>View the full desktop interface</summary>
+
 ![Lead Extractor desktop interface](docs/lead-extractor-ui.jpg)
+
+</details>
 
 ## What the workflow does
 
@@ -24,6 +42,17 @@ Searches have durable checkpoints. Pause, continue, application-restart recovery
 
 Repeated searches for the same niche and locations continue after earlier batches by default. The app loads identities from matching saved runs, scrolls Maps beyond previously observed listings, excludes cross-source repeats, and saves only newly discovered businesses in the new run. The search form includes a clear opt-out for intentional refreshes of earlier leads; source exhaustion is recorded instead of silently returning the first batch again.
 
+### How the records stay connected
+
+| Layer | What it preserves |
+|---|---|
+| Search History | Original parameters, provider queries, source events, partial results, failures, checkpoints and exact stop reasons for each run. |
+| Research Library | Completed collections with canonical prospects, evidence, conflicts, duplicate lineage, verification and exports kept together. |
+| Lead Intelligence | Cross-run company memory, parent-brand and operating-entity identity, locations, contacts, evidence IDs, website changes, outcomes and one next-best action. |
+| Outreach | Approved templates and drafts, suppression decisions, campaign assignments, provider results, replies and terminal outcomes written back to company memory. |
+
+No stage flattens the preceding one. A compiled field remains traceable to its source URL, capture time, method and evidence excerpt, while unresolved conflicts remain visible for review.
+
 ## Main capabilities
 
 ### Discovery and source planning
@@ -37,6 +66,8 @@ Repeated searches for the same niche and locations continue after earlier batche
 - Public profile strategies for Yelp, Yellow Pages, Manta, Chamber of Commerce, BBB, MapQuest, Alignable, Houzz, Thumbtack, Bark, Taskrabbit, Clutch, GoodFirms, Y Combinator, Product Hunt, BetaList, Wellfound, and other niche-relevant sources.
 - Hiring and market signals from applicable public Indeed, RemoteOK, Wellfound, Meta Ad Library, and Google Ads Transparency routes.
 - Optional Google Places, Apollo, Apify, and Outscraper connections. Paid or licensed providers stay off until configured and explicitly enabled.
+
+Sources are deliberately labeled by execution mode. Google Maps, OSM, web discovery, business websites, Wikidata, applicable NPI searches and applicable Singapore ACRA open data can participate in the automatic waterfall. The registry workspace also contains reviewed official links whose access may be manual, registration-based, key-based or paid; opening one of those links is not presented as an automated result. Optional account providers require the user's own credentials and remain disabled until selected.
 
 ### Reusable research knowledge
 
@@ -52,9 +83,20 @@ Repeated searches for the same niche and locations continue after earlier batche
 - Unbounded multi-listing containers and repeated-phone title blocks are rejected.
 - News, obituary, and general-media pages are excluded unless they publish explicit `LocalBusiness` or `Organization` metadata.
 - Every retained claim distinguishes first-party observations, directory claims, search snippets, model suggestions, and unknown values.
+- Each compiled fact receives a stable evidence ID plus source authority, freshness and trust weights. A weak or stale observation cannot silently replace a stronger retained fact.
 - Exact duplicates are merged while source history and conflicting fields remain reviewable.
+- Parent brands and local operating entities are modeled separately so branches, phone numbers, contacts and suppressions do not leak across locations without supporting evidence.
 - Email addresses are classified as possible-direct, general-business, support, automated, or uncertain.
 - DNS and MX observations describe the mail domain only; they never claim mailbox deliverability.
+- Missing information stays `not_observed`; it is never converted into a claim that something does not exist.
+
+### Diagnostics, interruption and recovery
+
+- Provider starts, exact queries, counts, timeouts, empty responses, merge decisions, fetch tiers and security checkpoints are appended to the saved run timeline.
+- Root-cause analysis distinguishes provider failure, source exhaustion, relevance filtering, deduplication, website extraction failure and user/browser intervention instead of reporting only “zero results.”
+- Pause, Continue and Stop controls preserve completed work. Interrupted application sessions are restored as resumable tasks rather than appearing complete.
+- CAPTCHA, login, WAF and verification checkpoints wait for the user in the dedicated browser; the application does not attempt to defeat them.
+- Repeated matching searches use continuation memory and deeper Maps scrolling, with an explicit option to include previously retained businesses when a true refresh is wanted.
 
 ### Local extraction waterfall
 
@@ -81,6 +123,21 @@ Only `linkedin.com/company/...` candidates are accepted as company matches. A ma
 
 An optional, separately started employee stage can reuse the dedicated LinkedIn login to inspect verified company People pages. It retains only visibly listed professional names, headlines, profile URLs, company evidence, and observation time, deduplicates by profile URL, and writes them to a separate worksheet. Evidence-derived rules normalize visible job titles and add role group, seniority, outreach-priority, and decision-maker tags without inventing a title when LinkedIn does not show one. The run is bounded to 100 companies, 100 visible profiles per company, and 5,000 retained profiles. It never opens private contact data, sends invitations or messages, or bypasses Google or LinkedIn security checkpoints.
 
+### Lead memory, monitoring and outcome learning
+
+- The action queue chooses one evidence-based next step: verify, find a contact, research a decision-maker, review in the browser, prepare outreach, follow up or suppress.
+- Conditional website checks reuse `ETag` and `Last-Modified` data and ignore routine timestamp, session, rotating-review and advertising-noise changes. Material contact, leadership, service, location or technology changes return the company to review.
+- Recorded delivery, bounce, reply, positive reply, referral, out-of-office, meeting, customer, wrong-contact and unsubscribe outcomes update the queue and suppression state deterministically.
+- Campaign variants use stable company assignment and show observed outcomes. Small samples are labeled as observations, not predictions.
+- Do-not-contact controls can apply to an email, domain, parent brand or operating entity.
+
+### Exports and connected services
+
+- Every saved run can be downloaded as CSV or JSON; the visible filtered table can also be exported.
+- Google Sheets receives organized lead tabs and a separate employee tab through user-authorized OAuth.
+- Zoho Mail is the only built-in sending path and uses its official API after explicit campaign approval.
+- Optional Google Places, Apollo, Apify and Outscraper credentials are stored locally and tested without returning secret values to the interface or diagnostics.
+
 ## Local AI
 
 Lead Extractor reads the Ollama model inventory from `http://127.0.0.1:11434`, rejects cloud and embedding-only models, and offers locally installed GGUF completion models.
@@ -91,6 +148,10 @@ The current task routing favors:
 - a stronger compatible model for qualification, strict intelligence, email judgment, and outreach drafting.
 
 If no model is available, discovery, verification, organization, exports, Google Sheets, and manual templates continue to work. AI output is advisory and cannot browse independently, promote a snippet into a verified fact, or send outreach without approval.
+
+Local AI is used only where it adds judgment: niche phrase suggestions, fit review, contact-role classification, evidence-bounded intelligence and unsent outreach drafts. Curated and user-approved terms can be remembered in the niche pack for later searches. Deterministic validation still controls query safety, entity identity, duplicate merging, email syntax, source provenance, DNC rules and send eligibility.
+
+For strict compilation, the model receives the retained evidence ledger rather than an unrestricted prompt. Its JSON must match the project schema; every claim and opportunity signal must cite an existing evidence ID and copy a literal supporting excerpt. A bad citation, unsupported enum or invented fact rejects the complete model response, after which the deterministic compilation remains available.
 
 ## Google Sheets setup
 
@@ -120,6 +181,10 @@ Zoho Mail integration uses OAuth and the official API. Client credentials and re
 - Local AI can produce evidence-bounded drafts.
 - Support and automated addresses are excluded from campaign preparation.
 - Suppressions, prior outcomes, campaign limits, and randomized pacing are checked before delivery.
+- Campaigns can use one approved template or stable multi-variant assignments for observed outcome comparison.
+- Sequences contain one to five steps with increasing day delays and remain scoped to the operating entity and contact.
+- Replies, opt-outs, hard bounces, wrong contacts, meetings and customer outcomes stop remaining sequence steps; out-of-office replies can pause until a retained return date.
+- Referrals return to contact discovery as unverified records rather than being treated as immediately verified leads.
 - Sending requires explicit campaign approval.
 - Provider failures pause the campaign instead of silently skipping recipients.
 
@@ -138,11 +203,15 @@ The workspace is organized into:
 - **Data sources** — built-in source cards, optional credentials, Google OAuth setup, updates, and repair.
 - **Business registries** — reviewed official directories followed by offer-to-buyer planning.
 
+Installed builds can check the configured GitHub release channel, show download progress and restart to install an update. The Repair action rebuilds the bundled local runtime while preserving saved searches, lead data, browser preferences, connections and outreach settings. Automatic update downloads are not forced; the user starts the download and installation from the maintenance card.
+
 ## Install on Windows
 
 ### Installer
 
 Download `Lead-Extractor-Setup-*.exe` from GitHub Releases.
+
+> Windows may show an unfamiliar-publisher warning until public builds are code-signed. Verify the SHA256 checksum published with the release before running the installer.
 
 The installer can enable Chrome integration. The app creates a separate persistent profile and never imports the normal Chrome profile. Saved research and browser state live in the Windows user-data directory, not the installation folder.
 
@@ -245,6 +314,13 @@ npm audit
 - A public company LinkedIn URL does not identify the correct decision-maker.
 - Complex websites may expose no usable evidence even after rendering.
 - Network providers can change policies, schemas, quotas, and access requirements.
+
+## Contributing and support
+
+- Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request.
+- Use [GitHub Discussions](https://github.com/ariyankhalid97-creator/lead-intelligence-workbench/discussions) for questions, use cases and ideas once enabled.
+- Use the structured [issue forms](https://github.com/ariyankhalid97-creator/lead-intelligence-workbench/issues/new/choose) for confirmed bugs, features and source requests.
+- Follow [SECURITY.md](SECURITY.md) for vulnerabilities. Never publish credentials, lead records, browser profiles or outreach data.
 
 ## License
 

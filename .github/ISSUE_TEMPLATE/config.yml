@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Questions and ideas
+    url: https://github.com/ariyankhalid97-creator/lead-intelligence-workbench/discussions
+    about: Ask for help, share a workflow or discuss an early idea.
+  - name: Security report
+    url: https://github.com/ariyankhalid97-creator/lead-intelligence-workbench/security/policy
+    about: Read the private-reporting guidance before sharing vulnerability details.
