@@ -1,4 +1,11 @@
-const { app, BrowserWindow, ipcMain, shell, screen } = require("electron");
+const {
+  app,
+  BrowserWindow,
+  ipcMain,
+  shell,
+  screen,
+  dialog,
+} = require("electron");
 const { autoUpdater } = require("electron-updater");
 const { spawn } = require("child_process");
 const fs = require("fs");
@@ -48,6 +55,11 @@ function runtimePython() {
     "Scripts",
     "python.exe",
   );
+}
+function backupPython() {
+  return app.isPackaged
+    ? runtimePython()
+    : path.join(ROOT, ".venv", "Scripts", "python.exe");
 }
 function installerPreferences() {
   try {
@@ -204,12 +216,13 @@ async function dashboardReady() {
   }
 }
 
-function runProcess(command, args, timeoutMs) {
+function runProcess(command, args, timeoutMs, options = {}) {
   return new Promise((resolve, reject) => {
     let stderr = "";
     const child = spawn(command, args, {
       windowsHide: true,
       stdio: ["ignore", "ignore", "pipe"],
+      env: options.env || process.env,
     });
     const timer = setTimeout(() => {
       child.kill();
@@ -479,6 +492,87 @@ ipcMain.handle("maintenance:repair", async () => {
     });
     throw error;
   }
+});
+ipcMain.handle("data:backup", async (_event, options = {}) => {
+  const stamp = new Date().toISOString().slice(0, 10);
+  const chosen = await dialog.showSaveDialog(mainWindow, {
+    title: "Save Lead Extractor backup",
+    defaultPath: path.join(
+      app.getPath("documents"),
+      `Lead-Extractor-Backup-${stamp}.leadbackup`,
+    ),
+    filters: [{ name: "Lead Extractor backup", extensions: ["leadbackup"] }],
+  });
+  if (chosen.canceled || !chosen.filePath) return { canceled: true };
+  const args = [
+    path.join(ROOT, "backup_manager.py"),
+    "create",
+    "--root",
+    dataRoot(),
+    "--file",
+    chosen.filePath,
+  ];
+  if (options.personal === true) args.push("--personal");
+  await runProcess(backupPython(), args, 180000);
+  return {
+    canceled: false,
+    path: chosen.filePath,
+    name: path.basename(chosen.filePath),
+    personal: options.personal === true,
+  };
+});
+ipcMain.handle("data:restore", async () => {
+  const chosen = await dialog.showOpenDialog(mainWindow, {
+    title: "Restore Lead Extractor backup",
+    properties: ["openFile"],
+    filters: [{ name: "Lead Extractor backup", extensions: ["leadbackup"] }],
+  });
+  if (chosen.canceled || !chosen.filePaths[0]) return { canceled: true };
+  const source = chosen.filePaths[0];
+  await runProcess(
+    backupPython(),
+    [
+      path.join(ROOT, "backup_manager.py"),
+      "inspect",
+      "--root",
+      dataRoot(),
+      "--file",
+      source,
+    ],
+    30000,
+  );
+  if (backend && !backend.killed) backend.kill();
+  backend = null;
+  await new Promise((resolve) => setTimeout(resolve, 500));
+  try {
+    await runProcess(
+      backupPython(),
+      [
+        path.join(ROOT, "backup_manager.py"),
+        "restore",
+        "--root",
+        dataRoot(),
+        "--file",
+        source,
+      ],
+      180000,
+    );
+    await ensureBackend();
+    mainWindow.webContents.reload();
+    return { canceled: false, name: path.basename(source), restored: true };
+  } catch (error) {
+    await ensureBackend().catch(() => {});
+    throw error;
+  }
+});
+ipcMain.handle("ai:benchmark", async () => {
+  await runProcess(
+    backupPython(),
+    [path.join(ROOT, "ai_benchmark.py")],
+    900000,
+    { env: { ...process.env, LEAD_EXTRACTOR_HOME: dataRoot() } },
+  );
+  return { complete: true };
 });
 
 const singleInstance = app.requestSingleInstanceLock();

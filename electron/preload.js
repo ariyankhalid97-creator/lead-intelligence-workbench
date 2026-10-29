@@ -12,6 +12,9 @@ contextBridge.exposeInMainWorld("leadFinderWindow", {
   downloadUpdate: () => ipcRenderer.invoke("maintenance:download"),
   installUpdate: () => ipcRenderer.invoke("maintenance:install"),
   repairRuntime: () => ipcRenderer.invoke("maintenance:repair"),
+  createBackup: (options) => ipcRenderer.invoke("data:backup", options),
+  restoreBackup: () => ipcRenderer.invoke("data:restore"),
+  runAIBenchmark: () => ipcRenderer.invoke("ai:benchmark"),
   onMaintenance: (callback) => {
     const listener = (_event, state) => callback(state);
     ipcRenderer.on("maintenance:state", listener);

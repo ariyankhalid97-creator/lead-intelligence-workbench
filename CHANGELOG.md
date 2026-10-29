@@ -14,6 +14,14 @@
 - Retrieve compact memory at prompt time for phrase planning, evidence review and strict compilation without changing Ollama model weights.
 - Exclude lead names, emails, phones, URLs and page text from the AI memory snapshot; current-run evidence and deterministic validators remain authoritative.
 - Refresh memory after compilation, teaching feedback and outreach outcomes, with a manual refresh control and explicit confidence state.
+- Add a reviewed local curriculum for niche boundaries, evidence discipline, contact judgment, identity resolution, qualification and approval-gated outreach.
+- Add a repeatable five-discipline competency benchmark and use saved local scores to recommend models and route planning versus analysis work.
+
+### Portable backup and restore
+
+- Add desktop Save backup and Restore backup controls for research databases, AI teaching and benchmark memory, reference libraries, exports and local preferences.
+- Create transaction-safe SQLite snapshots, validate archive paths, sizes and SHA256 hashes, and create an automatic safety backup before restore.
+- Add an explicitly labeled full-personal mode, enabled by default for personal use, that includes the dedicated Chrome profile and DPAPI-protected Google, Zoho and provider credentials without committing any personal data to Git.
 
 ## 2.5.1 — 2026-10-29
 

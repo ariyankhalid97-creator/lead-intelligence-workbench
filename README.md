@@ -160,6 +160,12 @@ This retrieval design is deliberate: it makes repeated work more consistent whil
 
 The design follows the useful local persistence patterns documented by [LangGraph's SQLite checkpointer](https://github.com/langchain-ai/langgraph/tree/main/libs/checkpoint-sqlite) and the memory extraction/retrieval separation demonstrated by [Mem0](https://github.com/mem0ai/mem0), without adding their heavier runtime dependencies to the desktop application.
 
+### Reviewed education and model benchmarks
+
+Every compatible local model receives the same bounded research curriculum before relevant tasks. The curriculum teaches concrete niche terminology, adjacent-service boundaries, evidence authority, `not observed` versus `absent`, company and operating-location identity, conservative contact classification, qualification uncertainty and grounded outreach. These lessons contain synthetic examples only; scraped lead content never becomes general instruction.
+
+A repeatable local competency exam scores installed models on search planning, evidence judgment, contact labels, identity boundaries and outreach safety. Results stay inside `data/ai_benchmarks.json` and are invalidated when the curriculum changes. The dashboard shows the score and measured task routing. A perfect baseline score means the model followed these bounded cases; it is not a claim of general intelligence or guaranteed lead accuracy.
+
 For strict compilation, the model receives the retained evidence ledger rather than an unrestricted prompt. Its JSON must match the project schema; every claim and opportunity signal must cite an existing evidence ID and copy a literal supporting excerpt. A bad citation, unsupported enum or invented fact rejects the complete model response, after which the deterministic compilation remains available.
 
 ## Google Sheets setup
@@ -202,6 +208,12 @@ Users remain responsible for consent, lawful basis, identification, opt-out lang
 ## Desktop interface
 
 The Electron application is borderless and resizable. Back, forward, refresh, thin/wide navigation, minimize, maximize, and close controls live inside the application interface.
+
+### Backup, reinstall and restore
+
+Use **Data sources → Updates & repair → Save backup** to create a portable `.leadbackup` file. After reinstalling the Windows EXE, open the same panel, choose **Restore backup**, and select that file. The app restores organized searches, lead intelligence, AI teaching and benchmark memory, reference-library data, exports and supported local preferences. It validates every archived path and checksum and creates a safety backup of the current workspace before replacing databases.
+
+The **Full personal backup** option is enabled by default for personal use. It also includes the dedicated Chrome profile and exports Google, Zoho and optional-provider credentials in a Windows DPAPI-protected payload. These private values remain excluded from Git and normal diagnostics. Keep the `.leadbackup` file private. Chrome and Credential Manager encryption is tied to the Windows user and machine, so a software reinstall under the same Windows account can restore it, while a different computer or Windows account can still require reconnection and browser login.
 
 The workspace is organized into:
 

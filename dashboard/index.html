@@ -425,6 +425,12 @@ Dallas, Texas</textarea>
               <select id="aiModel" disabled>
                 <option value="">No model available</option>
               </select>
+              <p id="aiModelBenchmark" class="fine-print" role="status">
+                Model competency benchmark has not run yet.
+              </p>
+              <button id="aiBenchmarkRun" class="ghost small" type="button">
+                Benchmark installed models
+              </button>
               <label for="aiOffer">Your outreach offer (optional)</label>
               <textarea
                 id="aiOffer"
@@ -635,12 +641,31 @@ Dallas, Texas</textarea>
             <button id="repairRuntime" class="ghost" type="button">
               Repair local runtime
             </button>
+            <button id="createBackup" class="secondary" type="button">
+              Save backup
+            </button>
+            <button id="restoreBackup" class="ghost" type="button">
+              Restore backup
+            </button>
           </div>
           <p class="fine-print">
             Updates come only from the public GitHub release channel. Repair
             rebuilds the bundled Python environment and preserves searches,
             leads, browser profile preferences and outreach settings.
           </p>
+          <p id="backupStatus" class="fine-print" role="status">
+            Portable backups include research, AI memory and local settings.
+          </p>
+          <div class="check-row backup-personal-option">
+            <input id="backupIncludePersonal" type="checkbox" checked />
+            <label for="backupIncludePersonal"
+              >Full personal backup<small
+                >Also preserve the dedicated Chrome profile and
+                Windows-user-protected Google, Zoho and provider credentials.
+                Keep the backup file private.</small
+              ></label
+            >
+          </div>
         </section>
         <div class="notice source-attribution">
           OpenStreetMap data © OpenStreetMap contributors, ODbL. City lookup

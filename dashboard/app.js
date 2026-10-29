@@ -60,7 +60,13 @@ function renderMaintenance(state = {}) {
 async function loadMaintenance() {
   const desktop = window.leadFinderWindow;
   if (!desktop?.maintenanceStatus) {
-    for (const id of ["checkUpdates", "repairRuntime"]) $(id).disabled = true;
+    for (const id of [
+      "checkUpdates",
+      "repairRuntime",
+      "createBackup",
+      "restoreBackup",
+    ])
+      $(id).disabled = true;
     return;
   }
   renderMaintenance(await desktop.maintenanceStatus());
@@ -241,6 +247,8 @@ function aiReady() {
 function syncAiControls() {
   $("aiModel").disabled = aiBusy || !aiConnection?.models?.length;
   $("aiRefresh").disabled = aiBusy;
+  $("aiBenchmarkRun").disabled =
+    aiBusy || !window.leadFinderWindow?.runAIBenchmark;
   $("aiPlanButton").disabled = aiBusy || !aiReady();
   const review = $("aiReviewButton");
   if (review)
@@ -284,7 +292,10 @@ async function loadAiStatus() {
               model.recommended_for.length
                 ? ` · best for ${model.recommended_for[0]}`
                 : "";
-            return `<option value="${escapeHtml(name)}">${escapeHtml(name + size + role)}</option>`;
+            const benchmark = Number(model.benchmark_score)
+              ? ` · benchmark ${Number(model.benchmark_score)}/100`
+              : " · not benchmarked";
+            return `<option value="${escapeHtml(name)}">${escapeHtml(name + size + benchmark + role)}</option>`;
           })
           .join("")
       : '<option value="">No model available</option>';
@@ -297,6 +308,10 @@ async function loadAiStatus() {
       (status.available && models.length
         ? "Your local model is available. It runs only when you ask."
         : "Local AI is offline. Start your local model service, then check the connection. Scraping still works.");
+    const benchmarked = models.filter((model) => Number(model.benchmark_score));
+    $("aiModelBenchmark").textContent = benchmarked.length
+      ? `${benchmarked.length} model${benchmarked.length === 1 ? "" : "s"} benchmarked on curriculum ${status.curriculum_version}. Planning: ${status.task_models?.planning || "not selected"}. Analysis: ${status.task_models?.analysis || "not selected"}.`
+      : "No current competency benchmark is saved. The app is using its reviewed default routing.";
     syncCampaignModels();
     syncAiChip();
   } catch (err) {
@@ -306,10 +321,33 @@ async function loadAiStatus() {
       "Local AI is unavailable: " +
       err.message +
       ". Scraping still works: search and verification remain available, but AI phrase expansion and evidence interpretation are unavailable, so niche coverage may be less precise.";
+    $("aiModelBenchmark").textContent =
+      "Benchmark unavailable while Local AI is offline.";
     syncCampaignModels();
     syncAiChip();
   } finally {
     syncAiControls();
+  }
+}
+async function runAiBenchmark() {
+  const desktop = window.leadFinderWindow;
+  if (!desktop?.runAIBenchmark) {
+    $("aiModelBenchmark").textContent =
+      "Model benchmarking is available in the desktop app.";
+    return;
+  }
+  const button = $("aiBenchmarkRun");
+  button.disabled = true;
+  $("aiModelBenchmark").textContent =
+    "Running the five-discipline local exam. This can take several minutes…";
+  try {
+    await desktop.runAIBenchmark();
+    await loadAiStatus();
+    toast("Local AI competency benchmark complete.");
+  } catch (err) {
+    $("aiModelBenchmark").textContent = `Benchmark failed: ${err.message}`;
+  } finally {
+    button.disabled = false;
   }
 }
 async function loadAiTeaching() {
@@ -716,6 +754,7 @@ function renderAiProposal() {
   syncAiControls();
 }
 $("aiRefresh").addEventListener("click", loadAiStatus);
+$("aiBenchmarkRun").addEventListener("click", runAiBenchmark);
 $("aiTeachSave").addEventListener("click", saveAiTeaching);
 $("aiBrainRefresh").addEventListener("click", refreshAiBrain);
 $("aiModel").addEventListener("change", () => {
@@ -2672,7 +2711,7 @@ async function loadLibrary() {
       api("/api/intelligence/overview"),
       api("/api/intelligence/queue"),
       api("/api/intelligence/niche-packs"),
-      api("/api/intelligence/brain"),
+      api("/api/intelligence/brain").catch(() => ({ memories: [], count: 0 })),
     ]);
     $("librarySummary").textContent =
       `${library.collections?.length || 0} compiled research collection${library.collections?.length === 1 ? "" : "s"} · ${library.compiled_record_count || 0} organized current prospects · ${library.record_count || 0} historical references retained separately.`;
@@ -4076,6 +4115,45 @@ $("repairRuntime").addEventListener("click", async () => {
     renderMaintenance(await window.leadFinderWindow.repairRuntime());
   } catch (err) {
     renderMaintenance({ status: "error", message: err.message });
+  }
+});
+$("createBackup").addEventListener("click", async () => {
+  const button = $("createBackup");
+  button.disabled = true;
+  $("backupStatus").textContent = "Creating a validated portable backup…";
+  try {
+    const result = await window.leadFinderWindow.createBackup({
+      personal: $("backupIncludePersonal").checked,
+    });
+    $("backupStatus").textContent = result.canceled
+      ? "Backup canceled; nothing changed."
+      : `Backup saved as ${result.name}${result.personal ? " with personal browser and connection data" : ""}. Keep this private file somewhere safe.`;
+  } catch (err) {
+    $("backupStatus").textContent = `Backup failed: ${err.message}`;
+  } finally {
+    button.disabled = false;
+  }
+});
+$("restoreBackup").addEventListener("click", async () => {
+  if (
+    !confirm(
+      "Restore saved research and settings from a Lead Extractor backup? The current data will be saved automatically as a safety backup first.",
+    )
+  )
+    return;
+  const button = $("restoreBackup");
+  button.disabled = true;
+  $("backupStatus").textContent =
+    "Validating and restoring the selected backup…";
+  try {
+    const result = await window.leadFinderWindow.restoreBackup();
+    if (result.canceled) {
+      $("backupStatus").textContent = "Restore canceled; nothing changed.";
+      button.disabled = false;
+    }
+  } catch (err) {
+    $("backupStatus").textContent = `Restore failed: ${err.message}`;
+    button.disabled = false;
   }
 });
 setInterval(async () => {
