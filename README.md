@@ -236,6 +236,8 @@ Download `Lead-Extractor-Setup-*.exe` from GitHub Releases.
 
 The installer can enable Chrome integration. The app creates a separate persistent profile and never imports the normal Chrome profile. Saved research and browser state live in the Windows user-data directory, not the installation folder.
 
+On the first launch, the installed application creates a private Python runtime and installs its local research components. A startup window shows this progress; depending on the computer and connection, the one-time setup can take several minutes. Later launches reuse the completed runtime and open normally.
+
 Requirements:
 
 - Windows 10 or Windows 11

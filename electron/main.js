@@ -25,6 +25,7 @@ const DASHBOARD_PORT =
     : 8788;
 const DASHBOARD_URL = `http://127.0.0.1:${DASHBOARD_PORT}/`;
 let mainWindow = null;
+let startupWindow = null;
 let backend = null;
 let saveTimer = null;
 let maintenanceState = {
@@ -204,6 +205,48 @@ function scheduleStateSave() {
   saveTimer = setTimeout(saveWindowState, 250);
 }
 
+function startupMarkup(title, detail, progress) {
+  const clean = (value) => String(value || "").replace(/[&<>"']/g, "");
+  const percent = Math.max(2, Math.min(100, Number(progress) || 2));
+  return `<!doctype html><meta charset="utf-8"><style>
+    *{box-sizing:border-box}body{margin:0;background:#17131e;color:#f6f3fb;font:14px "Segoe UI",sans-serif;display:grid;place-items:center;height:100vh;-webkit-app-region:drag}
+    main{width:440px;padding:34px;border:1px solid rgba(255,255,255,.12);border-radius:20px;background:linear-gradient(145deg,#242034,#4931b5);box-shadow:0 30px 80px rgba(0,0,0,.38)}
+    .mark{width:44px;height:44px;display:grid;place-items:center;border-radius:13px;background:#f1eeff;color:#4931b5;font-size:22px;font-weight:800}h1{margin:22px 0 8px;font-size:25px;letter-spacing:-.03em}p{margin:0;color:#dcd6e8;line-height:1.55}.track{height:7px;margin-top:25px;overflow:hidden;border-radius:99px;background:rgba(255,255,255,.14)}.bar{height:100%;width:${percent}%;border-radius:inherit;background:#c9baff;transition:width .3s}.note{margin-top:12px;font-size:12px;color:#bfb6cf}
+  </style><main><div class="mark">↗</div><h1>${clean(title)}</h1><p>${clean(detail)}</p><div class="track"><div class="bar"></div></div><div class="note">First-time setup can take several minutes. Please keep this window open.</div></main>`;
+}
+
+function showStartup(
+  title = "Starting Lead Extractor",
+  detail = "Preparing your private local workspace…",
+  progress = 5,
+) {
+  if (!app.isPackaged) return;
+  if (!startupWindow || startupWindow.isDestroyed()) {
+    startupWindow = new BrowserWindow({
+      width: 520,
+      height: 390,
+      frame: false,
+      resizable: false,
+      show: false,
+      backgroundColor: "#17131e",
+      webPreferences: {
+        contextIsolation: true,
+        nodeIntegration: false,
+        sandbox: true,
+      },
+    });
+    startupWindow.once("ready-to-show", () => startupWindow?.show());
+  }
+  startupWindow.loadURL(
+    `data:text/html;charset=utf-8,${encodeURIComponent(startupMarkup(title, detail, progress))}`,
+  );
+}
+
+function closeStartup() {
+  if (startupWindow && !startupWindow.isDestroyed()) startupWindow.close();
+  startupWindow = null;
+}
+
 async function dashboardReady() {
   try {
     const response = await fetch(`${DASHBOARD_URL}api/health`, {
@@ -254,7 +297,19 @@ async function ensurePythonRuntime() {
   if (!app.isPackaged && fs.existsSync(developmentPython))
     return developmentPython;
   const target = runtimePython();
-  if (fs.existsSync(target)) return target;
+  if (fs.existsSync(target)) {
+    showStartup(
+      "Loading your workspace",
+      "The private local runtime is ready. Starting saved services…",
+      72,
+    );
+    return target;
+  }
+  showStartup(
+    "Preparing the local runtime",
+    "Checking for a compatible Python installation…",
+    12,
+  );
   const candidates = process.env.PYTHON
     ? [{ command: process.env.PYTHON, prefix: [] }]
     : [
@@ -279,10 +334,20 @@ async function ensurePythonRuntime() {
     );
   const runtime = path.join(app.getPath("userData"), "runtime");
   fs.mkdirSync(runtime, { recursive: true });
+  showStartup(
+    "Creating your private runtime",
+    "This happens once after installation and keeps app data local.",
+    25,
+  );
   await runProcess(
     selected.command,
     [...selected.prefix, "-m", "venv", path.join(runtime, ".venv")],
     120000,
+  );
+  showStartup(
+    "Installing research components",
+    "Setting up browser, extraction, phone and secure-storage support…",
+    42,
   );
   await runProcess(
     target,
@@ -296,11 +361,19 @@ async function ensurePythonRuntime() {
     ],
     600000,
   );
+  showStartup(
+    "Local runtime ready",
+    "Starting the lead intelligence workspace…",
+    82,
+  );
   return target;
 }
 
 async function ensureBackend() {
-  if (await dashboardReady()) return;
+  if (await dashboardReady()) {
+    showStartup("Opening Lead Extractor", "The local workspace is ready.", 96);
+    return;
+  }
   const python = await ensurePythonRuntime();
   const preferences = installerPreferences();
   backend = spawn(
@@ -318,9 +391,17 @@ async function ensureBackend() {
       },
     },
   );
+  showStartup(
+    "Starting the research engine",
+    "Loading saved searches, AI memory and connected workflows…",
+    90,
+  );
   const deadline = Date.now() + 15000;
   while (Date.now() < deadline) {
-    if (await dashboardReady()) return;
+    if (await dashboardReady()) {
+      showStartup("Workspace ready", "Opening your dashboard…", 100);
+      return;
+    }
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
   throw new Error(
@@ -394,6 +475,7 @@ function createWindow() {
   mainWindow.on("close", saveWindowState);
   mainWindow.once("ready-to-show", () => {
     mainWindow.show();
+    closeStartup();
     updateNavigationState();
   });
   mainWindow.loadURL(`${DASHBOARD_URL}?desktop=1`);
@@ -587,10 +669,12 @@ app.whenReady().then(async () => {
   if (!singleInstance) return;
   app.setAppUserModelId("local.leadextractor.desktop");
   configureUpdaterEvents();
+  showStartup();
   try {
     await ensureBackend();
     createWindow();
   } catch (error) {
+    closeStartup();
     const failure = new BrowserWindow({
       width: 640,
       height: 320,

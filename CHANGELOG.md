@@ -7,6 +7,7 @@
 - Preserve the compact dark sidebar while rebuilding the application workspace with a neutral high-contrast palette, tighter typography, clearer hierarchy and consistent form, card, table and dialog treatments.
 - Replace oversized scrolling areas with bounded panels, sticky controls and expandable research-memory sections.
 - Add a dedicated consistency-memory summary to Local AI and a learned-niche section to the Research Library.
+- Show an immediate branded first-run window while the installed app creates its private Python runtime and installs local research components, instead of appearing unresponsive for several minutes.
 
 ### Private local-AI consistency memory
 
