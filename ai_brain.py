@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import re
+import threading
 from collections import Counter
 from datetime import UTC, datetime
 
@@ -22,6 +23,31 @@ CONSISTENCY_RULES = [
     "Do not infer facts, contacts, source coverage or current availability from memory.",
     "Evidence saved in the current run remains the only authority for lead claims.",
 ]
+
+_SCHEMA_LOCK = threading.Lock()
+
+
+def _ensure_schema():
+    """Create the current database schema before memory is read directly.
+
+    The desktop app normally initializes the database during startup, but
+    local-AI helpers are also imported by tests and can be called by tools on
+    a completely fresh data directory.  Keep this check cheap for existing
+    installations and avoid treating a missing memory table as an AI failure.
+    """
+    with engine.connection() as conn:
+        ready = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='ai_memory_snapshots'"
+        ).fetchone()
+    if ready:
+        return
+    with _SCHEMA_LOCK:
+        with engine.connection() as conn:
+            ready = conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='ai_memory_snapshots'"
+            ).fetchone()
+        if not ready:
+            engine.init(recover=False)
 
 
 def _clean(value, limit=120):
@@ -68,6 +94,7 @@ def _feedback(niche):
 
 def refresh(niche):
     """Rebuild one niche snapshot from aggregate local history."""
+    _ensure_schema()
     niche = _clean(niche)
     if not 2 <= len(niche) <= 120:
         raise ValueError("Choose a service between 2 and 120 characters")
@@ -160,6 +187,7 @@ def refresh(niche):
 
 def snapshot(niche=""):
     """Return one snapshot, or a compact overview of all learned niches."""
+    _ensure_schema()
     niche = _clean(niche)
     with engine.connection() as conn:
         if niche:

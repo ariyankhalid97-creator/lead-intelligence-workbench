@@ -61,6 +61,17 @@ class AIBrainTests(unittest.TestCase):
         self.assertIn("roofing solutions", context["avoid_phrases"])
         self.assertIn("Evidence saved in the current run remains the only authority for lead claims.", context["consistency_rules"])
 
+    def test_prompt_context_initializes_a_completely_fresh_database(self):
+        fresh_db = Path(self.tmp.name) / "fresh" / "workbench.db"
+        with patch.object(engine, "DB", fresh_db):
+            context = ai_brain.prompt_context("Roofing")
+            with engine.connection() as conn:
+                table = conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' AND name='ai_memory_snapshots'"
+                ).fetchone()
+        self.assertEqual(("ai_memory_snapshots",), table)
+        self.assertEqual("new", context["confidence"])
+
 
 if __name__ == "__main__":
     unittest.main()
