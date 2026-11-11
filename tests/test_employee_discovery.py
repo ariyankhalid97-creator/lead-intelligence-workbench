@@ -90,6 +90,47 @@ class EmployeeDiscoveryTests(unittest.TestCase):
         self.assertIn("linkedin.com/search/results/people", profiles[0]["manual_search_url"])
         self.assertFalse(profiles[0].get("employee_linkedin"))
 
+    def test_company_bio_must_match_configured_niche_role(self):
+        import json
+
+        row = {
+            "evidence": json.dumps([{
+                "contact_name": "Jane Doe",
+                "contact_role": "Senior Operations Manager",
+                "url": "https://example.com/team",
+            }]),
+        }
+        profiles = employee_discovery._website_people(
+            row,
+            {"name": "Example Co", "city": "Dallas", "website": "https://example.com"},
+            ["owner", "operations manager"],
+        )
+        self.assertEqual(1, len(profiles))
+        self.assertEqual("Jane Doe", profiles[0]["employee_name"])
+        self.assertEqual("operations manager", profiles[0]["configured_role"])
+        self.assertTrue(profiles[0]["niche_role_match"])
+
+    def test_unconfigured_published_role_becomes_generic_manual_review(self):
+        import json
+
+        row = {
+            "decision_maker": "Alex Smith",
+            "decision_maker_role": "Marketing Coordinator",
+            "evidence": json.dumps([{
+                "contact_name": "Alex Smith",
+                "contact_role": "Marketing Coordinator",
+                "url": "https://example.com/team",
+            }]),
+        }
+        profiles = employee_discovery._website_people(
+            row,
+            {"name": "Example Co", "city": "Dallas", "website": "https://example.com"},
+            ["owner", "operations manager"],
+        )
+        self.assertEqual(1, len(profiles))
+        self.assertEqual("Decision maker review", profiles[0]["employee_name"])
+        self.assertEqual("manual_linkedin_review_no_published_company_bio", profiles[0]["basis"])
+
 
 if __name__ == "__main__":
     unittest.main()

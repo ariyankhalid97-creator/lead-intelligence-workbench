@@ -264,7 +264,30 @@ def _sync(job: dict, task: dict) -> None:
         task.update(sheet_status="error", sheet_error=str(exc)[:300])
 
 
-def _website_people(row: dict, company: dict) -> list[dict]:
+def _normalized_role(value: str) -> str:
+    return " ".join(re.findall(r"[a-z0-9]+", str(value or "").casefold()))
+
+
+def _matching_niche_role(role: str, configured_roles: list[str] | None) -> str:
+    """Return the configured niche role supported by a published role, if any."""
+    observed = _normalized_role(role)
+    if not observed:
+        return ""
+    roles = [str(item).strip() for item in (configured_roles or []) if str(item).strip()]
+    if not roles:
+        return observed
+    for configured in roles:
+        expected = _normalized_role(configured)
+        if expected and re.search(rf"\b{re.escape(expected)}\b", observed):
+            return configured
+    return ""
+
+
+def _website_people(
+    row: dict,
+    company: dict,
+    configured_roles: list[str] | None = None,
+) -> list[dict]:
     try:
         evidence = json.loads(row.get("evidence") or "[]")
     except (ValueError, TypeError):
@@ -276,6 +299,9 @@ def _website_people(row: dict, company: dict) -> list[dict]:
         name = str(item.get("contact_name") or "").strip()
         role = str(item.get("contact_role") or "").strip()
         if not (name and role):
+            continue
+        matched_role = _matching_niche_role(role, configured_roles)
+        if not matched_role:
             continue
         key = (name.casefold(), role.casefold())
         people[key] = {
@@ -290,22 +316,28 @@ def _website_people(row: dict, company: dict) -> list[dict]:
             "observed_at": str(item.get("observed_at") or _now()),
             "basis": "name_and_role_published_together_on_company_website",
             "manual_review_required": True,
+            "niche_role_match": True,
+            "configured_role": matched_role,
         }
     if row.get("decision_maker") and row.get("decision_maker_role"):
-        key = (str(row["decision_maker"]).casefold(), str(row["decision_maker_role"]).casefold())
-        people.setdefault(key, {
-            "employee_name": str(row["decision_maker"])[:180],
-            "headline": str(row["decision_maker_role"])[:300],
-            "title": str(row["decision_maker_role"])[:160],
-            "company_name": company.get("name", ""),
-            "company_linkedin": company.get("linkedin", ""),
-            "company_website": company.get("website", ""),
-            "source_url": company.get("website", ""),
-            "source_excerpt": "Published name and role retained from the company website.",
-            "observed_at": row.get("checked_at") or _now(),
-            "basis": "published_company_website_role",
-            "manual_review_required": True,
-        })
+        matched_role = _matching_niche_role(row["decision_maker_role"], configured_roles)
+        if matched_role:
+            key = (str(row["decision_maker"]).casefold(), str(row["decision_maker_role"]).casefold())
+            people.setdefault(key, {
+                "employee_name": str(row["decision_maker"])[:180],
+                "headline": str(row["decision_maker_role"])[:300],
+                "title": str(row["decision_maker_role"])[:160],
+                "company_name": company.get("name", ""),
+                "company_linkedin": company.get("linkedin", ""),
+                "company_website": company.get("website", ""),
+                "source_url": company.get("website", ""),
+                "source_excerpt": "Published name and role retained from the company website.",
+                "observed_at": row.get("checked_at") or _now(),
+                "basis": "published_company_website_role",
+                "manual_review_required": True,
+                "niche_role_match": True,
+                "configured_role": matched_role,
+            })
     result = []
     for person in people.values():
         query = " ".join(filter(None, [person.get("employee_name"), company.get("name"), company.get("city")]))
@@ -343,6 +375,7 @@ def _run(job_id: str, cancel: threading.Event) -> None:
         task.update(status="running", message="Building a manual LinkedIn review queue from company website evidence", updated_at=_now())
         _save(job, task, employees)
         companies = task.get("companies", [])
+        configured_roles = (job.get("niche_pack") or {}).get("decision_maker_roles", [])
         for index in range(int(task.get("next_company_index", 0)), len(companies)):
             if cancel.is_set():
                 task.update(status="cancelled", message="Review-queue preparation stopped; retained tasks were saved")
@@ -350,7 +383,11 @@ def _run(job_id: str, cancel: threading.Event) -> None:
             company = companies[index]
             row_index = int(company.get("row_index", -1))
             source_row = job.get("rows", [])[row_index] if 0 <= row_index < len(job.get("rows", [])) else {}
-            for profile in _website_people(source_row, company)[: int(task.get("per_company", 25))]:
+            for profile in _website_people(
+                source_row,
+                company,
+                configured_roles,
+            )[: int(task.get("per_company", 25))]:
                 key = (str(profile.get("company_name", "")).casefold(), str(profile.get("employee_name", "")).casefold())
                 existing_index = employee_indexes.get(key)
                 if existing_index is None:

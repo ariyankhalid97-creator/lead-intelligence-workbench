@@ -125,7 +125,7 @@ The website layer uses a free, bounded escalation path:
 6. Extract structured organization data, `ContactPoint.contactType`, published contacts, social URLs, workflow signals, and literal evidence excerpts.
 7. When the direct pass finds no reviewable email—or finds only a phone or support/compliance inbox—inspect at most three same-site sitemap documents and a bounded set of Contact, Team, Leadership, Management, Staff or Locations pages. Cross-site sitemap URLs are ignored.
 
-Every address keeps separate `published`, `domain accepts mail`, and `mailbox checked` states. Text surrounding `mailto:` links and structured contact purpose can identify a support inbox even when its local part is `hello`. A named contact is linked to an address only when the company site publishes the name, role and email together.
+Every address keeps separate `published`, `domain accepts mail`, and `mailbox checked` states. Text surrounding `mailto:` links and structured contact purpose can identify a support inbox even when its local part is `hello`. Published people enter decision-maker review only when their role matches the configured niche pack. A named contact is linked to an address only when the company site publishes the name, role and email together. When a matched person has no published direct address, the app may retain at most three visibly labeled, review-only permutations from an observed company-domain pattern; these never become primary contacts without legitimate verification.
 
 This follows the useful clean-content and typed-extraction patterns found in modern open-source crawlers while keeping the default runtime small and local. It does not embed Firecrawl's AGPL server or require a hosted crawling key.
 
@@ -139,7 +139,7 @@ After discovery, the verification stage can type an exact public Google query fo
 
 Only `linkedin.com/company/...` candidates are accepted as company matches. A matching company URL is saved in the lead, research library, exports, and Google Sheets. Verification now refreshes the current lead worksheet automatically so newly resolved LinkedIn URLs are not left behind.
 
-The decision-maker stage starts with names and roles published on the company’s own website. It builds a manual LinkedIn review queue and one-click People search links; the user checks Current company and Locations filters before accepting a match. The app no longer automates LinkedIn People pages or collects employee profiles from a signed-in session. Review tasks and their company-site evidence can be written to a separate worksheet.
+The decision-maker stage starts with names and configured niche-pack roles published on the company’s own website. It builds a manual LinkedIn review queue and one-click People search links; the user checks Current company and Locations filters before accepting a match. The queue is bounded to 100 companies, 100 review tasks per company and 5,000 retained tasks. The app does not automate LinkedIn People pages, collect private contact data, send invitations or messages, or bypass security checkpoints. Review tasks and their company-site evidence can be written to a separate worksheet.
 
 ### Lead memory, monitoring and outcome learning
 
