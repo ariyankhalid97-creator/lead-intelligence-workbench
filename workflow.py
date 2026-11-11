@@ -14,6 +14,7 @@ import local_ai
 import verification
 import connections
 import reference_library
+import intelligence
 from contacts import now
 
 LOCK = threading.RLock()
@@ -258,7 +259,7 @@ def _verification_complete(row):
 
 
 def _outreach_review_count(job):
-    """Count only qualified leads with a rules-reviewed recommended address."""
+    """Count leads whose selected address passes the same central send gate."""
     eligible = 0
     for row in job.get("rows", []):
         if row.get("match_status") == "candidate":
@@ -267,7 +268,12 @@ def _outreach_review_count(job):
             recommended = json.loads(row.get("email_quality") or "{}").get("recommended", [])
         except (TypeError, ValueError):
             recommended = []
-        if any(isinstance(item, dict) and item.get("email") and item.get("recommended", True) for item in recommended):
+        addresses = [
+            str(item.get("email", "")).strip().casefold()
+            for item in recommended
+            if isinstance(item, dict) and item.get("email") and item.get("recommended", True)
+        ]
+        if any(intelligence.preflight(row, address)["eligible"] for address in addresses):
             eligible += 1
     return eligible
 

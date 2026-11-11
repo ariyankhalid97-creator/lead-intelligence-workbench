@@ -448,7 +448,11 @@ EMPLOYEE_SHEET_COLUMNS = (
     "role_tags",
     "title_status",
     "employee_linkedin",
+    "manual_search_url",
+    "manual_review_required",
     "evidence_url",
+    "source_url",
+    "source_excerpt",
     "basis",
     "observed_at",
 )
@@ -572,9 +576,13 @@ def _employee_sheet_tab(job: dict) -> tuple[str, list[list[str]]]:
     for row in job.get("employees", []):
         if not isinstance(row, dict):
             continue
-        url = str(row.get("employee_linkedin") or "").casefold().rstrip("/")
-        if url and url not in deduplicated:
-            deduplicated[url] = row
+        accepted_url = str(row.get("employee_linkedin") or "").casefold().rstrip("/")
+        review_url = str(row.get("manual_search_url") or "").casefold().rstrip("/")
+        identity = accepted_url or review_url or "|".join(
+            (str(row.get("company_name") or "").casefold(), str(row.get("employee_name") or "").casefold())
+        )
+        if identity.strip("|") and identity not in deduplicated:
+            deduplicated[identity] = row
     employees = list(deduplicated.values())
     priority_order = {"high": 0, "medium": 1, "low": 2}
     employees.sort(
@@ -587,9 +595,6 @@ def _employee_sheet_tab(job: dict) -> tuple[str, list[list[str]]]:
     )
     values = [list(EMPLOYEE_SHEET_COLUMNS)]
     for row in employees[:5000]:
-        url = str(row.get("employee_linkedin") or "").casefold().rstrip("/")
-        if not url:
-            continue
         values.append(
             [
                 _sheet_cell(

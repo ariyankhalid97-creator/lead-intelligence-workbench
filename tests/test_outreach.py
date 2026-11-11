@@ -1,11 +1,13 @@
 import json
 import tempfile
+import threading
 import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
 import engine
+import intelligence
 import outreach
 
 
@@ -58,6 +60,84 @@ class OutreachTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             outreach.create_campaign({"job_id": job["id"], "template_id": template_id, "scope": "matches", "maximum": 21})
 
+    def test_campaign_excludes_support_and_unroutable_legacy_results(self):
+        template_id = outreach.save_template({
+            "name": "Intro", "niche": "Roofing", "subject": "Hello", "body": "Hello from our team. Reply unsubscribe.",
+        })
+        job = {
+            "id": "2" * 32, "created_at": "2026-11-10T00:00:00+00:00", "status": "complete",
+            "rows": [
+                {"email": "customer.support+us@example.com"},
+                {"email": "owner@dead.example", "verification": json.dumps({"email_domain": {"status": "null_mx"}})},
+                {"email": "owner@example.com"},
+            ],
+        }
+        engine.save(job)
+        campaign_id = outreach.create_campaign({"job_id": job["id"], "template_id": template_id})
+        campaign = outreach._campaign(campaign_id)
+        self.assertEqual(["owner@example.com"], [message["recipient"] for message in campaign["messages"]])
+        self.assertEqual(
+            ["customer.support+us@example.com", "owner@dead.example"],
+            [item["email"] for item in campaign["preflight_excluded"]],
+        )
+
+    def test_sender_rechecks_routing_and_a_bounce_recorded_after_approval(self):
+        template_id = outreach.save_template({
+            "name": "Intro", "niche": "Roofing", "subject": "Hello", "body": "Hello from our team. Reply unsubscribe.",
+        })
+        job = {
+            "id": "3" * 32, "created_at": "2026-11-10T00:00:00+00:00", "status": "complete",
+            "rows": [{"email": email} for email in (
+                "owner@dead.example", "owner@bounced.example", "owner@working.example",
+            )],
+        }
+        engine.save(job)
+        campaign_id = outreach.create_campaign({"job_id": job["id"], "template_id": template_id})
+        with engine.connection() as conn:
+            conn.execute(
+                "INSERT INTO outreach_messages(campaign_id,recipient,lead_name,status,subject,body) VALUES(?,?,?,?,?,?)",
+                (campaign_id, "support@example.com", "Legacy lead", "draft", "Hello", "Body"),
+            )
+        provider = {"connected": True, "from_address": "sender@example.com"}
+        with patch.object(outreach, "provider_status", return_value=provider), patch.object(outreach.threading, "Timer"):
+            with self.assertRaisesRegex(ValueError, "bulk or marketing"):
+                outreach.start(campaign_id, confirmation=True)
+        intelligence.record_outcome({"email": "owner@bounced.example", "outcome": "hard_bounce"})
+        with patch.object(outreach, "mail_domain_status", side_effect=[
+            {"status": "null_mx"}, {"status": "mx_present"}, {"status": "mx_present"}, {"status": "mx_present"},
+        ]), patch.object(outreach, "_provider_send", return_value="accepted") as send, patch.object(
+            outreach.random, "uniform", return_value=0
+        ):
+            outreach._run(outreach._campaign(campaign_id), threading.Event())
+        send.assert_called_once()
+        self.assertEqual("owner@working.example", send.call_args.args[1])
+        campaign = outreach._campaign(campaign_id)
+        self.assertEqual(["blocked", "blocked", "sent", "blocked"], [message["status"] for message in campaign["messages"]])
+        self.assertEqual([0, 0, 1, 0], [message["attempts"] for message in campaign["messages"]])
+
+    def test_eml_import_suppresses_only_matched_511_bounce(self):
+        campaign_id = "7" * 32
+        with engine.connection() as conn:
+            conn.execute(
+                "INSERT INTO outreach_campaigns(id,created_at,updated_at,status,payload) VALUES(?,?,?,?,?)",
+                (campaign_id, "2026-11-10", "2026-11-10", "complete", json.dumps({"id": campaign_id, "status": "complete"})),
+            )
+            conn.execute(
+                "INSERT INTO outreach_messages(campaign_id,recipient,lead_name,status,subject,body) VALUES(?,?,?,?,?,?)",
+                (campaign_id, "gone@example.com", "Gone", "sent", "Hello", "Body"),
+            )
+        eml = """From: Mailer-Daemon <mailer-daemon@example.net>\nContent-Type: multipart/report; report-type=delivery-status; boundary=x\n\n--x\nContent-Type: text/plain\n\nFailed\n--x\nContent-Type: message/delivery-status\n\nFinal-Recipient: rfc822; gone@example.com\nAction: failed\nStatus: 5.1.1\nDiagnostic-Code: smtp; 550 mailbox not found\n--x--\n"""
+        result = outreach.import_bounce_eml(eml)
+        self.assertEqual("hard_bounce_suppressed", result["status"])
+        with engine.connection() as conn:
+            self.assertIsNotNone(conn.execute("SELECT 1 FROM outreach_suppressions WHERE email='gone@example.com'").fetchone())
+        duplicate = outreach.import_bounce_eml(eml)
+        self.assertTrue(duplicate["duplicate_import"])
+
+        unmatched = eml.replace("gone@example.com", "other@example.com")
+        result = outreach.import_bounce_eml(unmatched)
+        self.assertEqual("unmatched", result["status"])
+
     def test_campaign_rotates_multiple_templates_across_recipients(self):
         first = outreach.save_template({
             "name": "Angle A",
@@ -98,7 +178,7 @@ class OutreachTests(unittest.TestCase):
         self.assertTrue(subjects[0].startswith("Angle A"))
         self.assertTrue(subjects[1].startswith("Angle B"))
 
-    def test_multiple_campaigns_can_send_at_the_same_time(self):
+    def test_only_one_zoho_message_can_send_at_a_time(self):
         template_id = outreach.save_template({
             "name": "Parallel",
             "niche": "Plumbing",
@@ -126,19 +206,21 @@ class OutreachTests(unittest.TestCase):
         }
         with patch.object(outreach, "provider_status", return_value=provider), patch.object(
             outreach, "_zoho_send", return_value="provider-id"
-        ), patch.object(outreach.random, "uniform", return_value=0):
+        ), patch.object(outreach.random, "uniform", return_value=0), patch.object(
+            outreach, "mail_domain_status", return_value={"status": "mx_present"}
+        ):
             outreach.start(first, confirmation=True)
-            outreach.start(second, confirmation=True)
-            self.assertEqual(2, len(outreach.STOPS))
+            with self.assertRaisesRegex(ValueError, "already sending"):
+                outreach.start(second, confirmation=True)
+            self.assertEqual(1, len(outreach.STOPS))
             deadline = time.time() + 5
             while time.time() < deadline:
-                statuses = {
-                    outreach._campaign(item)["status"] for item in (first, second)
-                }
-                if statuses == {"complete"}:
+                status = outreach._campaign(first)["status"]
+                if status == "complete":
                     break
                 time.sleep(0.02)
-        self.assertEqual({"complete"}, statuses)
+        self.assertEqual("complete", status)
+        self.assertEqual("draft", outreach._campaign(second)["status"])
         self.assertEqual(0, len(outreach.STOPS))
 
     def _wait_for_drafting(self, campaign_id, timeout=10):

@@ -641,7 +641,7 @@ def _google_linkedin_company(name: str, cancel=None) -> dict:
 
 
 def search_company_sources(name: str, location: str, cancel=None) -> dict:
-    """Use the persistent visible Chrome profile for one bounded public Google search."""
+    """Find public review/social candidates; LinkedIn matching stays manual."""
     name = re.sub(r"\s+", " ", str(name or "")).strip()[:160]
     location = re.sub(r"\s+", " ", str(location or "")).strip()[:160]
     location_query = re.sub(r"[^A-Za-z0-9 ]+", " ", location.split(",", 1)[0] if "," in location else location)
@@ -649,13 +649,12 @@ def search_company_sources(name: str, location: str, cancel=None) -> dict:
     if not name:
         return {"status": "not_run", "query": "", "candidates": [], "error": "Business name missing"}
     enabled = enabled_services()
-    domains = ["linkedin.com/company", "linkedin.com/in", "instagram.com", "yelp.com", "bbb.org"]
+    domains = ["instagram.com", "yelp.com", "bbb.org"]
     if enabled.get("facebook"):
         domains.append("facebook.com")
-    query = f'"{name}" "{location}" social profiles reviews'.strip()
+    query = f'"{name}" "{location}" Instagram reviews'.strip()
     search_url = "https://www.google.com/search?q=" + quote(query) + "&num=20"
     targeted_queries = [
-        f'"{name}" {location_query} LinkedIn',
         f'"{name}" {location_query} Instagram',
         f'"{name}" {location_query} Yelp BBB',
     ]
@@ -666,28 +665,23 @@ def search_company_sources(name: str, location: str, cancel=None) -> dict:
     checkpoint = search_checkpoint_status()
     if checkpoint["paused"]:
         output, fallback_error = _fallback_candidates(tokens, targeted_queries, enabled, cancel)
+        output = [item for item in output if not str(item.get("kind", "")).startswith("linkedin_")]
         return {"status": "manual_checkpoint_with_fallback" if output else "manual_checkpoint", "query": query, "targeted_queries": targeted_queries, "search_url": search_url, "fallback_search_urls": fallback_search_urls, "search_engines": ["google", "bing"], "anchors_examined": 0, "decoded_host_counts": {}, "browser_checkpoint": checkpoint["reason"], "browser_retry_after_seconds": checkpoint["remaining_seconds"], "fallback_error": fallback_error, "candidates": output, "candidate_count": len(output)}
-    exact_linkedin = _google_linkedin_company(name, cancel)
-    if exact_linkedin.get("status") == "manual_checkpoint":
-        output, fallback_error = _fallback_candidates(tokens, targeted_queries, enabled, cancel)
-        return {
-            **exact_linkedin,
-            "status": "manual_checkpoint_with_fallback" if output else "manual_checkpoint",
-            "targeted_queries": targeted_queries,
-            "search_engines": ["google_typed_company_lookup", "public_search_adapter"],
-            "fallback_error": fallback_error,
-            "candidates": output,
-            "candidate_count": len(output),
-        }
+    exact_linkedin = {
+        "status": "manual_review",
+        "query": f'"{name}" {location_query} LinkedIn',
+        "candidates": [],
+    }
     # Other social/review sources still use the bounded public-search adapter
     # unless the optional broad browser mode was explicitly enabled.
     if _state().get("automated_web_search_enabled") is not True:
         output, fallback_error = _fallback_candidates(tokens, targeted_queries, enabled, cancel)
+        output = [item for item in output if not str(item.get("kind", "")).startswith("linkedin_")]
         combined = []
-        for item in [*exact_linkedin.get("candidates", []), *output]:
+        for item in output:
             if item.get("url") and item.get("url") not in {row.get("url") for row in combined}:
                 combined.append(item)
-        return {"status": "complete_with_fallback" if combined else exact_linkedin.get("status", "complete"), "query": query, "linkedin_query": exact_linkedin.get("query", ""), "targeted_queries": targeted_queries, "search_url": "", "fallback_search_urls": [], "search_engines": ["google_typed_company_lookup", "public_search_adapter"], "anchors_examined": 0, "decoded_host_counts": {}, "browser_checkpoint": "", "browser_automation_disabled": True, "exact_linkedin_status": exact_linkedin.get("status", ""), "exact_linkedin_error": exact_linkedin.get("error", ""), "fallback_error": fallback_error, "candidates": combined, "candidate_count": len(combined)}
+        return {"status": "complete_with_fallback" if combined else "complete", "query": query, "linkedin_query": exact_linkedin.get("query", ""), "targeted_queries": targeted_queries, "search_url": "", "fallback_search_urls": [], "search_engines": ["public_search_adapter"], "anchors_examined": 0, "decoded_host_counts": {}, "browser_checkpoint": "", "browser_automation_disabled": True, "linkedin_automation_disabled": True, "exact_linkedin_status": "manual_review", "exact_linkedin_error": "", "fallback_error": fallback_error, "candidates": combined, "candidate_count": len(combined)}
     browser_checkpoint = ""
     fallback_error = ""
     with SEARCH_LOCK:
@@ -765,9 +759,7 @@ def search_company_sources(name: str, location: str, cancel=None) -> dict:
             continue
         host_counts[host or "missing"] = host_counts.get(host or "missing", 0) + 1
         kind = ""
-        if host.endswith("linkedin.com"):
-            kind = "linkedin_person" if "/in/" in href else "linkedin_company" if "/company/" in href else ""
-        elif host.endswith("instagram.com"):
+        if host.endswith("instagram.com"):
             kind = "instagram"
         elif host.endswith("facebook.com") and enabled.get("facebook"):
             kind = "facebook"
@@ -787,7 +779,8 @@ def search_company_sources(name: str, location: str, cancel=None) -> dict:
             break
     if not output and not (cancel and cancel.is_set()):
         output, fallback_error = _fallback_candidates(tokens, targeted_queries, enabled, cancel)
+    output = [item for item in output if not str(item.get("kind", "")).startswith("linkedin_")]
     used_fallback = any(item.get("source") == "public_search_fallback_after_chrome" for item in output)
     status_value = "manual_checkpoint_with_fallback" if browser_checkpoint and output else "manual_checkpoint" if browser_checkpoint else "complete_with_fallback" if used_fallback else "complete"
-    return {"status": status_value, "query": query, "targeted_queries": targeted_queries, "search_url": search_url, "fallback_search_urls": fallback_search_urls, "search_engines": ["google", "bing"], "anchors_examined": len(anchors), "decoded_host_counts": host_counts, "browser_checkpoint": browser_checkpoint, "fallback_error": fallback_error, "candidates": output, "candidate_count": len(output)}
+    return {"status": status_value, "query": query, "targeted_queries": targeted_queries, "search_url": search_url, "fallback_search_urls": fallback_search_urls, "search_engines": ["google", "bing"], "anchors_examined": len(anchors), "decoded_host_counts": host_counts, "browser_checkpoint": browser_checkpoint, "fallback_error": fallback_error, "linkedin_automation_disabled": True, "candidates": output, "candidate_count": len(output)}
 

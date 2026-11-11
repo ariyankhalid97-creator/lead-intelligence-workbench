@@ -29,8 +29,16 @@ import sequence_engine
 import workflow
 import personal_offer
 import employee_discovery
+import review_workspace
 
 WEB = engine.SOURCE_ROOT / "dashboard"
+try:
+    APP_VERSION = json.loads((engine.SOURCE_ROOT / "package.json").read_text(encoding="utf-8")).get("version", "development")
+except (OSError, ValueError):
+    try:
+        APP_VERSION = json.loads((engine.SOURCE_ROOT / "version.json").read_text(encoding="utf-8")).get("version", "development")
+    except (OSError, ValueError):
+        APP_VERSION = "development"
 
 
 class LocalHTTPServer(ThreadingHTTPServer):
@@ -113,7 +121,10 @@ class Handler(BaseHTTPRequestHandler):
             self.send(
                 {
                     "ok": True,
-                    "version": "2.0",
+                    "version": APP_VERSION,
+                    "workspace": str(engine.ROOT),
+                    "database": str(engine.DB),
+                    "build": {"channel": "local", "source": str(engine.SOURCE_ROOT)},
                     "sources": engine.catalog(),
                     "preferences": {"chrome_integration": chrome_preference},
                 }
@@ -180,6 +191,24 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path == "/api/intelligence/queue":
             self.send(intelligence.queue())
+            return
+        if path == "/api/review/leads":
+            values = parse_qs(parsed.query)
+            self.send(review_workspace.list_leads({
+                "q": values.get("q", [""])[0],
+                "action": values.get("action", [""])[0],
+                "decision": values.get("decision", [""])[0],
+            }))
+            return
+        if path.startswith("/api/review/leads/"):
+            item = review_workspace.lead_detail(path.split("/")[-1])
+            self.send(item or {"error": "Lead not found"}, 200 if item else 404)
+            return
+        if path == "/api/review/presets":
+            self.send({"presets": review_workspace.presets()})
+            return
+        if path == "/api/review/followups":
+            self.send({"tasks": review_workspace.followup_tasks()})
             return
         if path == "/api/intelligence/ai-teaching":
             niche = parse_qs(parsed.query).get("niche", [""])[0]
@@ -364,7 +393,8 @@ class Handler(BaseHTTPRequestHandler):
             return
         try:
             size = int(self.headers.get("Content-Length", "0"))
-            if not 0 < size <= 25000:
+            limit = 550000 if self.path == "/api/outreach/bounces/import" else 25000
+            if not 0 < size <= limit:
                 raise ValueError("Request too large or empty")
             params = json.loads(self.rfile.read(size))
             if self.path == "/api/ai/assist":
@@ -439,6 +469,24 @@ class Handler(BaseHTTPRequestHandler):
             if self.path == "/api/intelligence/outcomes":
                 self.send(intelligence.record_outcome(params), 201)
                 return
+            if self.path == "/api/review/contact":
+                self.send(review_workspace.save_contact_review(params), 201)
+                return
+            if self.path == "/api/review/linkedin":
+                self.send(review_workspace.save_linkedin_review(params), 201)
+                return
+            if self.path == "/api/review/claim-feedback":
+                self.send(review_workspace.save_claim_feedback(params), 201)
+                return
+            if self.path == "/api/review/split-branch":
+                self.send(review_workspace.split_branch(params), 201)
+                return
+            if self.path == "/api/review/presets":
+                self.send(review_workspace.save_preset(params), 201)
+                return
+            if self.path == "/api/review/followups":
+                self.send(review_workspace.save_followup_task(params), 201)
+                return
             if self.path == "/api/intelligence/ai-teaching":
                 self.send(intelligence.save_ai_teaching(params), 201)
                 return
@@ -512,6 +560,9 @@ class Handler(BaseHTTPRequestHandler):
             if self.path == "/api/outreach/zoho/disconnect":
                 outreach.disconnect_zoho()
                 self.send({"disconnected": True})
+                return
+            if self.path == "/api/outreach/bounces/import":
+                self.send(outreach.import_bounce_eml(params.get("content", "")), 201)
                 return
             if self.path == "/api/outreach/campaigns":
                 self.send({"id": outreach.create_campaign(params)}, 201)
@@ -608,7 +659,7 @@ def main():
                 f"http://127.0.0.1:{args.port}/api/health", timeout=2
             ) as response:
                 running = json.load(response)
-            if running.get("version") == "2.0":
+            if running.get("ok") is True:
                 if not args.no_browser:
                     webbrowser.open(f"http://127.0.0.1:{args.port}")
                 print("Lead Finder is already running.", flush=True)
@@ -622,6 +673,7 @@ def main():
     employee_discovery.init(recover=not args.preserve_active)
     outreach.init(recover=not args.preserve_active)
     intelligence.init()
+    review_workspace.init()
     workflow.init(recover=not args.preserve_active)
     intelligence.start_watcher()
     print(f"Lead Finder workspace: http://127.0.0.1:{args.port}", flush=True)

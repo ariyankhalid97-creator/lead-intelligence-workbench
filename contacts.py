@@ -8,6 +8,7 @@ import re
 import socket
 import threading
 import time
+import xml.etree.ElementTree as ET
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from urllib.error import HTTPError
@@ -41,35 +42,52 @@ SYSTEM_GETADDRINFO = socket.getaddrinfo
 def mail_domain_status(domain: str) -> dict:
     """Check public MX records without claiming mailbox deliverability."""
     domain = str(domain or "").casefold().strip().rstrip(".")
-    if not re.fullmatch(r"[a-z0-9.-]+\.[a-z]{2,}", domain):
+    label = r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?"
+    if len(domain) > 253 or not re.fullmatch(rf"{label}(?:\.{label})+", domain):
         return {"status": "invalid_domain", "mx": [], "basis": "syntax"}
     with DNS_LOCK:
         cached = MAIL_DNS_CACHE.get(domain)
         if cached and cached[0] > time.monotonic():
             return cached[1]
-    request = Request(
-        "https://8.8.8.8/resolve?name=" + quote(domain) + "&type=MX",
-        headers={"Accept": "application/dns-json", "User-Agent": APP_USER_AGENT},
-    )
-    try:
+
+    def query(kind, record_type):
+        request = Request(
+            f"https://dns.google/resolve?name={quote(domain)}&type={kind}",
+            headers={"Accept": "application/dns-json", "User-Agent": APP_USER_AGENT},
+        )
         with urlopen(request, timeout=5) as response:
             payload = json.loads(response.read(200_000))
-        records = [str(item.get("data", ""))[:300] for item in payload.get("Answer", []) if item.get("type") == 15]
+        code = payload.get("Status")
+        if payload.get("TC"):
+            return None, []
+        if code != 0:
+            return code, []
+        return code, [
+            item["data"][:300]
+            for item in payload.get("Answer", [])
+            if item.get("type") == record_type and item.get("data")
+        ]
+
+    try:
+        mx_code, records = query("MX", 15)
+        if mx_code not in (0, 3):  # NOERROR and NXDOMAIN are definitive answers.
+            raise ValueError(f"MX lookup did not complete (DNS status {mx_code})")
         null_mx = any(re.fullmatch(r"\s*0\s+\.\s*", item) for item in records)
         address_records = []
-        if payload.get("Status") == 0 and not records:
-            fallback_request = Request(
-                "https://8.8.8.8/resolve?name=" + quote(domain) + "&type=A",
-                headers={"Accept": "application/dns-json", "User-Agent": APP_USER_AGENT},
-            )
-            with urlopen(fallback_request, timeout=5) as response:
-                fallback = json.loads(response.read(200_000))
-            address_records = [str(item.get("data", ""))[:100] for item in fallback.get("Answer", []) if item.get("type") in (1, 28)]
+        if mx_code == 0 and not records:
+            fallback_codes = []
+            for kind, record_type in (("A", 1), ("AAAA", 28)):
+                code, address_records = query(kind, record_type)
+                fallback_codes.append(code)
+                if address_records:
+                    break
+            if not address_records and any(code not in (0, 3) for code in fallback_codes):
+                raise ValueError("DNS address fallback did not complete")
         status = (
             "null_mx"
             if null_mx
             else "mx_present"
-            if payload.get("Status") == 0 and records
+            if records
             else "a_fallback_present"
             if address_records
             else "no_mail_route_observed"
@@ -82,7 +100,7 @@ def mail_domain_status(domain: str) -> dict:
             "note": "A public mail route supports the domain only; it does not verify this mailbox or delivery.",
         }
     except Exception as exc:
-        result = {
+        return {
             "status": "temporary_dns_unavailable",
             "mx": [],
             "basis": "dns_check_failed",
@@ -494,7 +512,7 @@ def extract_document(body: str, url: str, lead: Lead) -> tuple[str, list[str]]:
         else ("PK" if "pakistan" in location else None)
     )
 
-    def evidence(field, value, method):
+    def evidence(field, value, method, **details):
         item = {
             "field": field,
             "value": value,
@@ -502,13 +520,14 @@ def extract_document(body: str, url: str, lead: Lead) -> tuple[str, list[str]]:
             "method": method,
             "observed_at": now(),
         }
+        item.update({key: value for key, value in details.items() if value not in (None, "", [], {})})
         if not any(
             e.get("field") == field and e.get("value") == value and e.get("url") == url
             for e in records
         ):
             records.append(item)
 
-    def add_email(value, method):
+    def add_email(value, method, *, context="", contact_type="", contact_name="", contact_role=""):
         for email in EMAIL_RE.findall(unquote(str(value))):
             email = email.strip(".,;:").casefold()
             if not email.endswith(
@@ -519,7 +538,16 @@ def extract_document(body: str, url: str, lead: Lead) -> tuple[str, list[str]]:
                 "wixpress.com",
             ):
                 emails.add(email)
-                evidence("email", email, method)
+                evidence(
+                    "email",
+                    email,
+                    method,
+                    excerpt=re.sub(r"\s+", " ", str(context)).strip()[:500],
+                    contact_type=str(contact_type).strip()[:100],
+                    contact_name=str(contact_name).strip()[:160],
+                    contact_role=str(contact_role).strip()[:120],
+                    published=True,
+                )
 
     def add_phone(value, method):
         try:
@@ -534,10 +562,45 @@ def extract_document(body: str, url: str, lead: Lead) -> tuple[str, list[str]]:
             pass
 
     structured_people = []
+    roles = r"Owner|Founder|President|Chief Executive Officer|CEO|General Manager|Operations Manager|Managing Director|Partner|Director|Head of [A-Za-z &]+|Sales Manager|Property Manager|Recruiter|Talent Acquisition Manager|Human Resources Manager"
     for script in soup.find_all("script", type="application/ld+json"):
         try:
             for node in walk_json(json.loads(script.string or script.get_text())):
                 kind = str(node.get("@type", ""))
+                kind_values = {str(value).casefold() for value in (node.get("@type") if isinstance(node.get("@type"), list) else [node.get("@type", "")])}
+                if "contactpoint" in kind_values and node.get("email"):
+                    add_email(
+                        node.get("email", ""),
+                        "structured ContactPoint",
+                        context=node.get("description", ""),
+                        contact_type=node.get("contactType", ""),
+                    )
+                if "person" in kind_values:
+                    person_name = str(node.get("name", "")).strip()
+                    person_role = str(node.get("jobTitle") or node.get("roleName") or "").strip()
+                    person_email = str(node.get("email", "")).strip()
+                    if person_name and person_role and person_email:
+                        add_email(
+                            person_email,
+                            "structured Person with role",
+                            context=f"{person_name} — {person_role}",
+                            contact_type="named contact",
+                            contact_name=person_name,
+                            contact_role=person_role,
+                        )
+                        structured_people.append({"name": person_name, "role": person_role, "email": person_email})
+                    same_as = node.get("sameAs", [])
+                    if not isinstance(same_as, list):
+                        same_as = [same_as]
+                    for profile in same_as:
+                        if "linkedin.com/in/" in str(profile).casefold():
+                            evidence(
+                                "linkedin_person_candidate",
+                                str(profile)[:1500],
+                                "structured Person sameAs",
+                                contact_name=person_name,
+                                contact_role=person_role,
+                            )
                 if any(
                     x in kind
                     for x in (
@@ -579,21 +642,43 @@ def extract_document(body: str, url: str, lead: Lead) -> tuple[str, list[str]]:
                             )
                             if address.get(k)
                         )
+                    same_as = node.get("sameAs", [])
+                    if not isinstance(same_as, list):
+                        same_as = [same_as]
+                    for profile in same_as:
+                        profile = str(profile)
+                        if "linkedin.com/company/" in profile.casefold() and not lead.linkedin:
+                            lead.linkedin = profile[:1500]
+                            evidence("linkedin_company", lead.linkedin, "structured Organization sameAs")
         except (ValueError, TypeError):
             continue
     links = []
     for anchor in soup.find_all("a", href=True):
         href = str(anchor["href"]).strip()
         if href.startswith("mailto:"):
-            add_email(href[7:].split("?")[0], "mailto link")
+            context = re.sub(r"\s+", " ", anchor.parent.get_text(" ", strip=True) if anchor.parent else anchor.get_text(" ", strip=True))[:500]
+            role_match = re.search(rf"\b({roles})\b", context, re.I)
+            name_match = re.search(r"\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})\b", context)
+            purpose_match = re.search(r"\b(customer service|customer support|support|sales|press|media|careers?|recruiting|billing|rentals?|leasing|property management)\b", context, re.I)
+            add_email(
+                href[7:].split("?")[0],
+                "mailto link",
+                context=context,
+                contact_type=purpose_match.group(1) if purpose_match else "",
+                contact_name=name_match.group(1) if name_match and role_match else "",
+                contact_role=role_match.group(1) if name_match and role_match else "",
+            )
         if href.startswith("tel:"):
             add_phone(href[4:], "telephone link")
         absolute = urljoin(url, href).split("#")[0]
         host = urlparse(absolute).hostname or ""
         for social in ("facebook", "instagram", "linkedin"):
             if host == social + ".com" or host.endswith("." + social + ".com"):
-                if not getattr(lead, social):
-                    setattr(lead, social, absolute)
+                if social == "linkedin" and "/in/" in urlparse(absolute).path.casefold():
+                    evidence("linkedin_person_candidate", absolute, "website link")
+                elif social != "linkedin" or "/company/" in urlparse(absolute).path.casefold():
+                    if not getattr(lead, social):
+                        setattr(lead, social, absolute)
         if urlparse(absolute).hostname == urlparse(url).hostname and re.search(
             r"contact|about|team|staff|leadership|management|press|news|services?|portfolio|testimonials?|reviews?|report|documentation|inspection",
             href,
@@ -605,7 +690,6 @@ def extract_document(body: str, url: str, lead: Lead) -> tuple[str, list[str]]:
     visible = soup.get_text(" ", strip=True)
     fit_markdown = compact_markdown(body)
     fit_text = re.sub(r"^#{1,3}\s+|^-\s+", "", fit_markdown, flags=re.M)
-    roles = r"Owner|Founder|President|Chief Executive Officer|CEO|General Manager|Operations Manager|Managing Director|Partner"
     person_patterns = (
         rf"\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+){{1,3}})\s*[,|\-–]\s*({roles})\b",
         rf"\b({roles})\s*[:|\-–]\s*([A-Z][a-z]+(?:\s+[A-Z][a-z]+){{1,3}})\b",
@@ -680,8 +764,54 @@ def extract_document(body: str, url: str, lead: Lead) -> tuple[str, list[str]]:
     return fit_text or visible, sorted(dict.fromkeys(links), key=link_priority)
 
 
+def _same_site(left: str, right: str) -> bool:
+    a = (urlparse(left).hostname or "").casefold().removeprefix("www.")
+    b = (urlparse(right).hostname or "").casefold().removeprefix("www.")
+    return bool(a and a == b)
+
+
+def _sitemap_contact_urls(client: WebClient, website: str, seen: set[str], limit: int, emit) -> list[str]:
+    """Return a few same-site contact/people/location URLs from bounded sitemaps."""
+    if limit <= 0:
+        return []
+    root = urljoin(normalize_website(website), "/sitemap.xml")
+    sitemap_queue = [root]
+    sitemap_seen = set()
+    candidates = []
+    while sitemap_queue and len(sitemap_seen) < 3 and len(candidates) < limit:
+        sitemap_url = sitemap_queue.pop(0)
+        if sitemap_url in sitemap_seen or not _same_site(website, sitemap_url):
+            continue
+        sitemap_seen.add(sitemap_url)
+        try:
+            body, final_url = client.get(sitemap_url)
+            if len(body) > 2_000_000 or "<!DOCTYPE" in body.upper():
+                raise ValueError("Sitemap is too large or contains a document type")
+            root_node = ET.fromstring(body)
+            locations = [str(node.text or "").strip() for node in root_node.iter() if node.tag.rsplit("}", 1)[-1] == "loc"]
+            if root_node.tag.rsplit("}", 1)[-1] == "sitemapindex":
+                for location in locations:
+                    if len(sitemap_queue) + len(sitemap_seen) >= 3:
+                        break
+                    if _same_site(website, location):
+                        sitemap_queue.append(location)
+                continue
+            for location in locations:
+                if not _same_site(website, location) or location in seen or location in candidates:
+                    continue
+                path = urlparse(location).path
+                if re.search(r"(?:^|[-_/])(contact|team|leadership|management|staff|people|locations?)(?:[-_/]|$)", path, re.I):
+                    candidates.append(location.split("#", 1)[0])
+                    if len(candidates) >= limit:
+                        break
+            emit("website", "info", "Sitemap fallback inspected", url=final_url, matching_pages=len(candidates))
+        except Exception as exc:
+            emit("website", "info", "Sitemap fallback unavailable", url=sitemap_url, error=str(exc)[:240])
+    return candidates
+
+
 def enrich(
-    lead: Lead, client: WebClient, cancel, emit, max_pages=3
+    lead: Lead, client: WebClient, cancel, emit, max_pages=5
 ) -> tuple[Lead, str]:
     if lead.profile_url:
         lead.contact_status = "platform_profile_only"
@@ -690,8 +820,15 @@ def enrich(
         lead.contact_status = "no_website"
         return lead, ""
     queue = [normalize_website(lead.website)]
+    direct_limit = min(max_pages, 3)
+    initial_emails = set(filter(None, lead.emails.split("; "))) | set(filter(None, [lead.email]))
+    initial_phones = set(filter(None, lead.phones.split("; "))) | set(filter(None, [lead.phone]))
     seen, content, successes, empty_pages = set(), [], 0, 0
-    for url in queue:
+    cursor = 0
+    sitemap_added = False
+    while cursor < len(queue):
+        url = queue[cursor]
+        cursor += 1
         if cancel.is_set() or len(seen) >= max_pages:
             break
         if url in seen:
@@ -719,7 +856,7 @@ def enrich(
             content.append(visible)
             successes += 1
             for link in links:
-                if link not in queue and len(queue) < max_pages:
+                if link not in queue and len(queue) < direct_limit:
                     queue.append(link)
         except Exception as exc:
             emit(
@@ -728,6 +865,31 @@ def enrich(
                 "Website page unavailable",
                 url=url,
                 error=str(exc)[:240],
+            )
+        current_emails = set(filter(None, lead.emails.split("; "))) | set(filter(None, [lead.email]))
+        current_phones = set(filter(None, lead.phones.split("; "))) | set(filter(None, [lead.phone]))
+        new_emails = current_emails - initial_emails
+        excluded_prefixes = {
+            "support", "help", "helpdesk", "customerservice", "customer.service",
+            "billing", "privacy", "legal", "abuse", "noreply", "no-reply",
+            "donotreply", "do-not-reply",
+        }
+        found_useful_email = any(
+            email.casefold().split("@", 1)[0] not in excluded_prefixes
+            for email in new_emails if "@" in email
+        )
+        # A phone number or support/compliance inbox is still useful evidence,
+        # but it should not stop the bounded search for a reviewable contact.
+        if cursor >= len(queue) and not sitemap_added and not found_useful_email and len(seen) < max_pages:
+            sitemap_added = True
+            queue.extend(
+                _sitemap_contact_urls(
+                    client,
+                    lead.website,
+                    seen,
+                    max_pages - len(seen),
+                    emit,
+                )
             )
     lead.checked_at = now()
     lead.contact_status = (

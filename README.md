@@ -11,6 +11,8 @@ Lead Extractor is a free Windows desktop workspace that turns a niche and locati
 
 The application runs locally. A paid AI key and subscription are not required.
 
+The desktop is organized around five daily screens: **Discover** starts or saves a search, **Runs** shows progress and diagnostics, **Leads & Review** presents the next decision, **Follow-up** holds manual tasks and approved drafts, and **Settings** contains connections, local AI, backups, repair and updates. Registries and source controls remain available from Discover’s advanced options.
+
 ## See the workflow
 
 ![Lead Extractor workflow demonstration](docs/launch-assets/lead-extractor-demo.gif)
@@ -40,7 +42,7 @@ One search can move through the complete pipeline without changing tabs:
 
 Searches have durable checkpoints. Pause, continue, application-restart recovery, provider failures, CAPTCHA waits, and partial results remain visible in the same saved run.
 
-Repeated searches for the same niche and locations continue after earlier batches by default. The app loads identities from matching saved runs, scrolls Maps beyond previously observed listings, excludes cross-source repeats, and saves only newly discovered businesses in the new run. The search form includes a clear opt-out for intentional refreshes of earlier leads; source exhaustion is recorded instead of silently returning the first batch again.
+The search form separates **Find new businesses** from **Refresh saved businesses**. New-business runs load identities from matching saved runs, scroll Maps beyond previously observed listings, exclude cross-source repeats, and save only newly discovered businesses. Refresh runs revisit the retained first-party websites in the same niche and geography to update current evidence. Source exhaustion is recorded instead of silently returning the first batch again.
 
 ### How the records stay connected
 
@@ -51,6 +53,18 @@ Repeated searches for the same niche and locations continue after earlier batche
 | Lead Intelligence | Cross-run company memory, parent-brand and operating-entity identity, locations, contacts, evidence IDs, website changes, outcomes and one next-best action. |
 | AI Consistency Brain | Niche-scoped aggregate run statistics, reviewed terminology, source performance and outcome signals retrieved locally at prompt time without storing lead contacts. |
 | Outreach | Approved templates and drafts, suppression decisions, campaign assignments, provider results, replies and terminal outcomes written back to company memory. |
+
+### Daily review decisions
+
+The Leads & Review screen uses a filterable queue on the left and one branch-aware record on the right. Business, branch, proposed contact and next action stay visible at the top; Contacts, LinkedIn review, Evidence and Activity remain grouped below. A reviewer can confirm, reject or defer a contact, approve permission to send separately, save a LinkedIn match with its supporting note, correct an evidence claim, or mark its evidence insufficient. A mistaken multi-branch merge can be split while preserving both source histories.
+
+Every surface uses the same three readiness facts:
+
+1. the address is published and has no blocking mail-domain evidence;
+2. the contact has been reviewed;
+3. permission to send has been explicitly recorded.
+
+A blocked primary mailbox does not suppress its company or sibling branches. The app surfaces the next sourced alternative for review. Broader domain, parent-brand and operating-entity suppressions require an explicit scope and reason.
 
 No stage flattens the preceding one. A compiled field remains traceable to its source URL, capture time, method and evidence excerpt, while unresolved conflicts remain visible for review.
 
@@ -108,7 +122,10 @@ The website layer uses a free, bounded escalation path:
 3. Render a JavaScript shell only when normal HTML has no usable page content.
 4. Stop and retain diagnostics when a WAF or human-verification challenge appears.
 5. Convert readable content into compact, boilerplate-reduced Markdown.
-6. Extract structured organization data, published contacts, social URLs, workflow signals, and literal evidence excerpts.
+6. Extract structured organization data, `ContactPoint.contactType`, published contacts, social URLs, workflow signals, and literal evidence excerpts.
+7. When the direct pass finds no reviewable email—or finds only a phone or support/compliance inbox—inspect at most three same-site sitemap documents and a bounded set of Contact, Team, Leadership, Management, Staff or Locations pages. Cross-site sitemap URLs are ignored.
+
+Every address keeps separate `published`, `domain accepts mail`, and `mailbox checked` states. Text surrounding `mailto:` links and structured contact purpose can identify a support inbox even when its local part is `hello`. A named contact is linked to an address only when the company site publishes the name, role and email together.
 
 This follows the useful clean-content and typed-extraction patterns found in modern open-source crawlers while keeping the default runtime small and local. It does not embed Firecrawl's AGPL server or require a hosted crawling key.
 
@@ -122,7 +139,7 @@ After discovery, the verification stage can type an exact public Google query fo
 
 Only `linkedin.com/company/...` candidates are accepted as company matches. A matching company URL is saved in the lead, research library, exports, and Google Sheets. Verification now refreshes the current lead worksheet automatically so newly resolved LinkedIn URLs are not left behind.
 
-An optional, separately started employee stage can reuse the dedicated LinkedIn login to inspect verified company People pages. It retains only visibly listed professional names, headlines, profile URLs, company evidence, and observation time, deduplicates by profile URL, and writes them to a separate worksheet. Evidence-derived rules normalize visible job titles and add role group, seniority, outreach-priority, and decision-maker tags without inventing a title when LinkedIn does not show one. The run is bounded to 100 companies, 100 visible profiles per company, and 5,000 retained profiles. It never opens private contact data, sends invitations or messages, or bypasses Google or LinkedIn security checkpoints.
+The decision-maker stage starts with names and roles published on the company’s own website. It builds a manual LinkedIn review queue and one-click People search links; the user checks Current company and Locations filters before accepting a match. The app no longer automates LinkedIn People pages or collects employee profiles from a signed-in session. Review tasks and their company-site evidence can be written to a separate worksheet.
 
 ### Lead memory, monitoring and outcome learning
 
@@ -134,9 +151,9 @@ An optional, separately started employee stage can reuse the dedicated LinkedIn 
 
 ### Exports and connected services
 
-- Every saved run can be downloaded as CSV or JSON; the visible filtered table can also be exported.
+- Every saved run can be downloaded as CSV or JSON; CSV includes stable company, parent-brand and operating-entity IDs plus selected-contact source, review and send-permission state. The visible filtered table can also be exported.
 - Google Sheets receives organized lead tabs and a separate employee tab through user-authorized OAuth.
-- Zoho Mail is the only built-in sending path and uses its official API after explicit campaign approval.
+- Zoho Mail is the only built-in sending path. Batch research and drafting are allowed, but the zero-budget workflow sends at most one explicitly reviewed, permitted correspondence message at a time through the official API.
 - Optional Google Places, Apollo, Apify and Outscraper credentials are stored locally and tested without returning secret values to the interface or diagnostics.
 
 ## Local AI
@@ -164,7 +181,7 @@ The design follows the useful local persistence patterns documented by [LangGrap
 
 Every compatible local model receives the same bounded research curriculum before relevant tasks. The curriculum teaches concrete niche terminology, adjacent-service boundaries, evidence authority, `not observed` versus `absent`, company and operating-location identity, conservative contact classification, qualification uncertainty and grounded outreach. These lessons contain synthetic examples only; scraped lead content never becomes general instruction.
 
-A repeatable local competency exam scores installed models on search planning, evidence judgment, contact labels, identity boundaries and outreach safety. Results stay inside `data/ai_benchmarks.json` and are invalidated when the curriculum changes. The dashboard shows the score and measured task routing. A perfect baseline score means the model followed these bounded cases; it is not a claim of general intelligence or guaranteed lead accuracy.
+A frozen, blind local competency evaluation scores installed models on search planning, evidence judgment, contact labels, identity boundaries and outreach safety. Its 51 hand-reviewed cases include same-name companies, shared-domain branches, support-only contacts, unknown answers and unsafe unsupported drafts. Grading labels and teaching memory are never sent to Ollama. The result records the evaluation-set date and stays inside `data/ai_benchmarks.json`; development feedback remains separate. The dashboard shows the score and measured task routing. A perfect score means the model followed these bounded cases; it is not a claim of general intelligence or guaranteed lead accuracy.
 
 For strict compilation, the model receives the retained evidence ledger rather than an unrestricted prompt. Its JSON must match the project schema; every claim and opportunity signal must cite an existing evidence ID and copy a literal supporting excerpt. A bad citation, unsupported enum or invented fact rejects the complete model response, after which the deterministic compilation remains available.
 
@@ -194,14 +211,16 @@ Zoho Mail integration uses OAuth and the official API. Client credentials and re
 
 - Templates can be reused across niches.
 - Local AI can produce evidence-bounded drafts.
-- Support and automated addresses are excluded from campaign preparation.
-- Suppressions, prior outcomes, campaign limits, and randomized pacing are checked before delivery.
+- Campaigns exclude support and automated inboxes, including addresses from older searches and drafts. They show why a recipient was blocked.
+- Before each send, the app checks public mail routing, recorded bounces, and suppressions. A temporary DNS failure pauses the campaign so you can retry. A working mail route confirms that the domain can receive mail. The individual mailbox may still be inactive.
+- Draft packs are manual follow-up tasks. Automated bulk, promotional and marketing delivery through Zoho is disabled.
 - Campaigns can use one approved template or stable multi-variant assignments for observed outcome comparison.
 - Sequences contain one to five steps with increasing day delays and remain scoped to the operating entity and contact.
 - Replies, opt-outs, hard bounces, wrong contacts, meetings and customer outcomes stop remaining sequence steps; out-of-office replies can pause until a retained return date.
 - Referrals return to contact discovery as unverified records rather than being treated as immediately verified leads.
 - Sending requires explicit campaign approval.
 - Provider failures pause the campaign instead of silently skipping recipients.
+- A local `.eml` delivery-notice importer matches DSNs to previously sent recipients. Only a confirmed `5.1.1` mailbox-not-found result suppresses the exact address automatically; temporary and policy failures remain review items.
 
 Users remain responsible for consent, lawful basis, identification, opt-out language, platform terms, and applicable marketing law.
 

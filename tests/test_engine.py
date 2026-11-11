@@ -476,6 +476,19 @@ class QualityTests(unittest.TestCase):
         self.assertEqual([], json.loads(lead.observations))
         self.assertTrue(any("no readable" in event[0][2] for event in events))
 
+    def test_sitemap_fallback_finds_same_site_leadership_contact(self):
+        lead = lf.Lead(name="Example", website="https://example.test", city="Dallas")
+        pages = {
+            "https://example.test": ("<main><h1>Example</h1><p>Business services.</p></main>", "https://example.test"),
+            "https://example.test/sitemap.xml": ("<?xml version='1.0'?><urlset xmlns='http://www.sitemaps.org/schemas/sitemap/0.9'><url><loc>https://example.test/leadership</loc></url><url><loc>https://other.test/contact</loc></url></urlset>", "https://example.test/sitemap.xml"),
+            "https://example.test/leadership": ("<main><p>Jane Doe, Founder</p><a href='mailto:jane@example.test'>Email Jane</a></main>", "https://example.test/leadership"),
+        }
+        client = SimpleNamespace(get=lambda url: pages[url])
+        contacts.enrich(lead, client, threading.Event(), lambda *args, **kwargs: None)
+        self.assertEqual("jane@example.test", lead.email)
+        self.assertEqual("Jane Doe", lead.decision_maker)
+        self.assertNotIn("other.test", lead.emails)
+
     def test_spreadsheet_formula_is_neutralized(self):
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / "out.csv"

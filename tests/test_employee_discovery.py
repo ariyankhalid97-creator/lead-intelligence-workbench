@@ -71,6 +71,25 @@ class EmployeeDiscoveryTests(unittest.TestCase):
         self.assertIn("temporary Sheets error", task["sheet_error"])
         self.assertEqual(1, len(job["employees"]))
 
+    def test_company_website_bio_becomes_manual_linkedin_review(self):
+        import json
+
+        row = {
+            "decision_maker": "Jane Doe",
+            "decision_maker_role": "Head of Talent Acquisition",
+            "checked_at": "2026-11-10T00:00:00Z",
+            "evidence": json.dumps([{
+                "field": "email", "value": "jane@example.com", "url": "https://example.com/team",
+                "contact_name": "Jane Doe", "contact_role": "Head of Talent Acquisition",
+                "excerpt": "Jane Doe — Head of Talent Acquisition", "observed_at": "2026-11-10T00:00:00Z",
+            }]),
+        }
+        profiles = employee_discovery._website_people(row, {"name": "Example Co", "city": "Dallas", "website": "https://example.com", "linkedin": "https://www.linkedin.com/company/example/"})
+        self.assertEqual(1, len(profiles))
+        self.assertTrue(profiles[0]["manual_review_required"])
+        self.assertIn("linkedin.com/search/results/people", profiles[0]["manual_search_url"])
+        self.assertFalse(profiles[0].get("employee_linkedin"))
+
 
 if __name__ == "__main__":
     unittest.main()

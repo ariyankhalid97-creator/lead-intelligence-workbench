@@ -33,8 +33,8 @@ class BrowserCheckpointTests(unittest.TestCase):
             patch.object(browser_session, "running") as running,
         ):
             result = browser_session.search_company_sources("Example", "Dallas, Texas")
-        self.assertEqual("manual_checkpoint_with_fallback", result["status"])
-        self.assertEqual([candidate], result["candidates"])
+        self.assertEqual("manual_checkpoint", result["status"])
+        self.assertEqual([], result["candidates"])
         fallback.assert_called_once()
         running.assert_not_called()
 
@@ -45,7 +45,7 @@ class BrowserCheckpointTests(unittest.TestCase):
         saved = json.loads(self.state.read_text(encoding="utf-8"))
         self.assertNotIn("search_pause_until", saved)
 
-    def test_normal_verification_types_exact_linkedin_lookup_then_uses_fallback(self):
+    def test_normal_verification_leaves_linkedin_for_manual_review(self):
         candidate = {"kind": "linkedin_company", "url": "https://linkedin.com/company/example"}
         exact = {
             "status": "complete",
@@ -58,12 +58,10 @@ class BrowserCheckpointTests(unittest.TestCase):
         ):
             result = browser_session.search_company_sources("Example", "Dallas, Texas")
         self.assertTrue(result["browser_automation_disabled"])
-        self.assertEqual(
-            ["google_typed_company_lookup", "public_search_adapter"],
-            result["search_engines"],
-        )
-        self.assertEqual([candidate], result["candidates"])
-        google.assert_called_once()
+        self.assertTrue(result["linkedin_automation_disabled"])
+        self.assertEqual(["public_search_adapter"], result["search_engines"])
+        self.assertEqual([], result["candidates"])
+        google.assert_not_called()
 
     def test_only_company_pages_are_accepted_as_linkedin_company_urls(self):
         self.assertEqual(

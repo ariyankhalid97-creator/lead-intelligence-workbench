@@ -47,13 +47,39 @@ def enroll(sequence_id, campaign_id, company_id, operating_entity_id, email):
 
 def apply_outcome(company_id, email, outcome, payload=None):
     outcome = str(outcome or "").casefold()
+    email = str(email or "").strip().casefold()
+    payload = payload or {}
+    operating_entity_id = str(payload.get("operating_entity_id", "")).strip()
+    # Mailbox-specific failures and contact decisions must never halt every
+    # sequence belonging to a company or parent brand. Broad suppression is an
+    # explicit, separately-scoped action handled by outreach_dnc.
+    email_scoped = outcome in {
+        "hard_bounce", "bounced", "wrong_contact", "unsubscribe",
+        "unsubscribed", "failed",
+    }
     with engine.connection() as conn:
-        rows = conn.execute("SELECT id,current_step FROM outreach_sequence_states WHERE (company_id=? OR email=?) AND state IN ('scheduled','active','paused_ooo')", (company_id, email.casefold())).fetchall()
+        if email_scoped:
+            if not email:
+                return 0
+            rows = conn.execute(
+                "SELECT id,current_step FROM outreach_sequence_states WHERE email=? AND state IN ('scheduled','active','paused_ooo')",
+                (email,),
+            ).fetchall()
+        elif operating_entity_id:
+            rows = conn.execute(
+                "SELECT id,current_step FROM outreach_sequence_states WHERE operating_entity_id=? AND state IN ('scheduled','active','paused_ooo')",
+                (operating_entity_id,),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT id,current_step FROM outreach_sequence_states WHERE company_id=? AND state IN ('scheduled','active','paused_ooo')",
+                (company_id,),
+            ).fetchall()
         for state_id, step in rows:
             state = "halted" if outcome in TERMINAL or outcome in {"replied", "referral"} else "paused_ooo" if outcome == "out_of_office" else "active"
-            pause_until = str((payload or {}).get("return_date", "")) if state == "paused_ooo" else ""
+            pause_until = str(payload.get("return_date", "")) if state == "paused_ooo" else ""
             conn.execute("UPDATE outreach_sequence_states SET state=?,last_outcome=?,pause_until=?,updated_at=? WHERE id=?", (state, outcome, pause_until, now(), state_id))
-            conn.execute("INSERT INTO outreach_reply_events(sequence_state_id,company_id,email,event_type,return_date,referred_name,referred_email,source,created_at,payload) VALUES(?,?,?,?,?,?,?,?,?,?)", (state_id, company_id, email.casefold(), outcome, pause_until, str((payload or {}).get("referred_name", ""))[:160], str((payload or {}).get("referred_email", ""))[:320], str((payload or {}).get("source", "manual"))[:120], now(), json.dumps(payload or {}, ensure_ascii=False)))
+            conn.execute("INSERT INTO outreach_reply_events(sequence_state_id,company_id,email,event_type,return_date,referred_name,referred_email,source,created_at,payload) VALUES(?,?,?,?,?,?,?,?,?,?)", (state_id, company_id, email, outcome, pause_until, str(payload.get("referred_name", ""))[:160], str(payload.get("referred_email", ""))[:320], str(payload.get("source", "manual"))[:120], now(), json.dumps(payload, ensure_ascii=False)))
     return len(rows)
 
 

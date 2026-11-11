@@ -19,6 +19,21 @@ class OrganizerTests(unittest.TestCase):
         self.assertEqual("not_tested", quality["recommended"][0]["deliverability"])
         self.assertEqual(1, summary["recommended_email_records"])
 
+    def test_support_and_automated_aliases_are_excluded(self):
+        for local in ("customer.support", "help.desk", "Support+Ticket", "support-team", "techsupport"):
+            with self.subTest(local=local):
+                result = organizer.classify_email(f"{local}@example.com")
+                self.assertEqual("support", result["type"])
+                self.assertFalse(result["recommended"])
+        for local in ("no_reply+campaign", "do.not.reply", "mailer.daemon"):
+            with self.subTest(local=local):
+                result = organizer.classify_email(f"{local}@example.com")
+                self.assertEqual("automated", result["type"])
+                self.assertFalse(result["recommended"])
+        for local in ("supporter", "helpful.alice", "sales+support"):
+            with self.subTest(local=local):
+                self.assertTrue(organizer.classify_email(f"{local}@example.com")["recommended"])
+
     def test_exact_duplicates_are_consolidated_with_source_ledger(self):
         rows = [
             {"name": "Acme Roof", "address": "1 Main St", "city": "Dallas", "email": "hello@acme.test", "source": "maps", "source_url": "https://maps.test/a", "evidence": "[]", "verification": "{}"},
@@ -54,6 +69,18 @@ class OrganizerTests(unittest.TestCase):
         self.assertEqual("hello@live.test", rows[0]["email"])
         self.assertEqual("domain_unsendable", next(item for item in quality["excluded"] if item["email"] == "owner@dead.test")["deliverability"])
         self.assertFalse(any(item["email"] == "noreply@live.test" for item in quality["recommended"]))
+
+    def test_contactpoint_purpose_can_exclude_hello_support_inbox(self):
+        evidence = [
+            {"field": "email", "value": "hello@example.com", "url": "https://example.com/contact", "contact_type": "customer service", "excerpt": "Customer service", "observed_at": "2026-11-10"},
+            {"field": "email", "value": "sales@example.com", "url": "https://example.com/contact", "contact_type": "sales", "excerpt": "Sales enquiries", "observed_at": "2026-11-10"},
+        ]
+        with patch.object(local_ai, "status", return_value={"available": False}):
+            rows, _ = organizer.organize_rows([{"name": "A", "email": "hello@example.com", "emails": "hello@example.com; sales@example.com", "evidence": json.dumps(evidence)}])
+        quality = json.loads(rows[0]["email_quality"])
+        self.assertEqual("sales@example.com", rows[0]["email"])
+        self.assertEqual("support", next(item for item in quality["excluded"] if item["email"] == "hello@example.com")["type"])
+        self.assertEqual("sales", quality["best_sourced_alternative"]["contact_type"])
 
 
 if __name__ == "__main__":

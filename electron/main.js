@@ -253,7 +253,7 @@ async function dashboardReady() {
       signal: AbortSignal.timeout(1000),
     });
     const body = await response.json();
-    return response.ok && body.version === "2.0";
+    return response.ok && body.ok === true && typeof body.version === "string";
   } catch {
     return false;
   }

@@ -1,8 +1,9 @@
-"""Durable, approval-gated one-to-one outreach through the official Zoho Mail API."""
+"""Durable, approval-gated one-to-one outreach through connected mail APIs."""
 
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import random
 import re
@@ -12,6 +13,8 @@ import time
 import uuid
 from collections import Counter
 from dataclasses import fields
+from email import policy
+from email.parser import BytesParser
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError, URLError
@@ -21,7 +24,7 @@ import engine
 import leadfinder as lf
 import local_ai
 import intelligence
-from contacts import now
+from contacts import mail_domain_status, now
 
 LOCK = threading.RLock()
 STOPS: dict[str, threading.Event] = {}
@@ -30,6 +33,7 @@ MODEL_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,119}")
 EMAIL = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
 VARIABLES = {"business_name", "niche", "city", "website", "ai_summary", "unsubscribe"}
 DAILY_SEND_CAP = 50
+MAIL_PROVIDERS = {"zoho"}
 
 
 def _recommended_email(row, address):
@@ -37,7 +41,7 @@ def _recommended_email(row, address):
         quality = json.loads(row.get("email_quality") or "{}")
     except (ValueError, TypeError):
         return True
-    recommended = quality.get("recommended")
+    recommended = quality.get("recommended") if isinstance(quality, dict) else None
     if not isinstance(recommended, list):
         return True
     return any(
@@ -141,9 +145,18 @@ def disconnect_zoho():
 
 
 def init(recover=True):
-    if not recover:
-        return
     with engine.connection() as conn:
+        legacy = conn.execute("SELECT id,payload FROM outreach_campaigns").fetchall()
+        for campaign_id, payload in legacy:
+            item = json.loads(payload)
+            if item.get("provider") != "zoho":
+                item["provider"] = "zoho"
+                conn.execute(
+                    "UPDATE outreach_campaigns SET payload=? WHERE id=?",
+                    (json.dumps(item), campaign_id),
+                )
+        if not recover:
+            return
         rows = conn.execute(
             "SELECT id,payload FROM outreach_campaigns WHERE status IN ('running','drafting')"
         ).fetchall()
@@ -231,15 +244,17 @@ def _campaign(campaign_id):
         drafting=counts.get("drafting", 0),
         draft_failed=counts.get("draft_failed", 0),
         failed=counts.get("failed", 0),
+        blocked=counts.get("blocked", 0),
     )
     campaign["remaining"] = campaign["ready"] + campaign["drafting"]
-    campaign["ai_drafted"] = campaign["ready"] + campaign["sent"] + campaign["failed"]
+    campaign["ai_drafted"] = campaign["ready"] + campaign["sent"] + campaign["failed"] + campaign["blocked"]
     campaign.setdefault("mode", "template")
     campaign.setdefault("ai_model", "")
     campaign.setdefault("ai_total", campaign["total"])
     campaign.setdefault("template_ids", [campaign.get("template_id")] if campaign.get("template_id") else [])
     campaign.setdefault("template_names", [campaign.get("template_name")] if campaign.get("template_name") else [])
     campaign.setdefault("message_sources", {})
+    campaign.setdefault("provider", "zoho")
     campaign["experiment_results"] = intelligence.experiment_results(campaign_id)
     return campaign
 
@@ -266,6 +281,43 @@ def _render(text, row, niche, from_address):
         "unsubscribe": f"mailto:{from_address}?subject=Unsubscribe",
     }
     return re.sub(r"{{\s*([a-z_]+)\s*}}", lambda m: str(values.get(m.group(1), "")), text)
+
+
+def _contact_review(row, address, block_reasons=None):
+    try:
+        quality = json.loads(row.get("email_quality") or "{}")
+    except (ValueError, TypeError):
+        quality = {}
+    candidates = [
+        item
+        for group in ("recommended", "excluded")
+        for item in quality.get(group, [])
+        if isinstance(item, dict)
+    ]
+    email = next(
+        (item for item in candidates if str(item.get("email", "")).casefold() == address.casefold()),
+        {},
+    )
+    try:
+        verification = json.loads(row.get("verification") or "{}")
+    except (ValueError, TypeError):
+        verification = {}
+    audit = verification.get("website_audit", {}) if isinstance(verification, dict) else {}
+    return {
+        "exact_recipient": address,
+        "contact_name": email.get("contact_name") or row.get("decision_maker", ""),
+        "current_role": email.get("contact_role") or row.get("decision_maker_role", ""),
+        "source_excerpt": email.get("source_excerpt", ""),
+        "source_url": email.get("source_url") or row.get("website", ""),
+        "last_seen": email.get("observed_at") or row.get("checked_at", ""),
+        "published": bool(email.get("published")),
+        "domain_status": email.get("domain_status", "not_checked"),
+        "mailbox_status": email.get("mailbox_status", "not_checked"),
+        "inbox_type": email.get("type", "unknown"),
+        "block_reason": " · ".join(block_reasons or []),
+        "business_phone": row.get("phone", ""),
+        "contact_form_url": row.get("website", "") if audit.get("contact_form") else "",
+    }
 
 
 def create_campaign(data):
@@ -298,7 +350,6 @@ def create_campaign(data):
             if template_ids
             else []
         )
-        suppressions = {row[0].casefold() for row in conn.execute("SELECT email FROM outreach_suppressions")}
     by_id = {row[0]: _template_row(row) for row in rows}
     templates = [by_id[item] for item in template_ids if item in by_id]
     ai_model = str(data.get("ai_model", "")).strip()
@@ -321,20 +372,33 @@ def create_campaign(data):
     preflight_excluded = []
     for index, row in enumerate(job.get("rows", [])):
         address = str(row.get("email", "")).strip().casefold()
-        if not EMAIL.fullmatch(address) or not _recommended_email(row, address) or address in suppressions or address in seen:
+        if not address or address in seen:
             continue
         if scope == "matches" and row.get("match_status") == "candidate":
             continue
         gate = intelligence.preflight(row, address, job_id)
         if not gate["eligible"]:
-            preflight_excluded.append({"name": row.get("name", ""), "email": address, "issues": gate["issues"]})
+            preflight_excluded.append({
+                "name": row.get("name", ""),
+                "email": address,
+                "issues": gate["issues"],
+                "review": _contact_review(row, address, gate["issues"]),
+            })
+            continue
+        if not _recommended_email(row, address):
             continue
         seen.add(address)
         selected.append((row, address, index))
         if len(selected) >= maximum:
             break
     if not selected:
+        if preflight_excluded:
+            reasons = list(dict.fromkeys(issue for item in preflight_excluded for issue in item["issues"]))
+            raise ValueError("No eligible email recipients. " + " · ".join(reasons[:3]))
         raise ValueError("No eligible, unsuppressed email recipients were found in this search")
+    provider = str(data.get("provider", "zoho")).strip().casefold()
+    if provider not in MAIL_PROVIDERS:
+        raise ValueError("Choose Zoho for this campaign")
     campaign_id, stamp = uuid.uuid4().hex, now()
     niche = job.get("params", {}).get("niche", templates[0]["niche"] if templates else "")
     template_names = [item["name"] for item in templates]
@@ -345,6 +409,7 @@ def create_campaign(data):
     status = "drafting" if mode == "ai" else "draft"
     campaign = {
         "id": campaign_id, "created_at": stamp, "updated_at": stamp,
+        "provider": provider,
         "status": status,
         "message": (
             f"Drafting {len(selected)} message{'s' if len(selected) != 1 else ''} with {ai_model}"
@@ -356,7 +421,7 @@ def create_campaign(data):
         "template_ids": template_ids,
         "template_names": template_names,
         "template_name": source_name,
-        "message_sources": {}, "lead_entities": {}, "lead_identities": {},
+        "message_sources": {}, "lead_entities": {}, "lead_identities": {}, "contact_reviews": {},
         "preflight_excluded": preflight_excluded,
         "experiment": {"method": "stable_hash_assignment", "variants": len(templates) if mode == "template" else 1},
         "niche": niche,
@@ -391,6 +456,7 @@ def create_campaign(data):
                 campaign["message_sources"][str(cursor.lastrowid)] = template["name"]
             campaign["lead_entities"][str(cursor.lastrowid)] = row.get("entity_id", "")
             campaign["lead_identities"][str(cursor.lastrowid)] = {key: row.get(key, "") for key in ("entity_id", "parent_brand_id", "operating_entity_id", "city", "address")}
+            campaign["contact_reviews"][str(cursor.lastrowid)] = _contact_review(row, address)
         if mode == "ai" or campaign["message_sources"]:
             conn.execute("UPDATE outreach_campaigns SET payload=? WHERE id=?", (json.dumps(campaign), campaign_id))
     if mode == "ai":
@@ -546,6 +612,121 @@ def suppress(email, reason="Manual suppression"):
     intelligence.add_dnc("email", email, reason)
 
 
+def import_bounce_eml(content):
+    """Import all structured DSN recipients; deduplicate and quarantine ambiguity."""
+    if not isinstance(content, str) or not 20 <= len(content) <= 500_000:
+        raise ValueError("Choose one .eml delivery notice under 500 KB")
+    raw = content.encode("utf-8", "replace")
+    message = BytesParser(policy=policy.default).parsebytes(raw)
+    sender = str(message.get("From") or "").casefold()
+    content_type = str(message.get("Content-Type") or "").casefold()
+    if not (
+        "multipart/report" in content_type
+        and "delivery-status" in content_type
+        and re.search(r"mailer-daemon|postmaster|mail delivery", sender)
+    ):
+        raise ValueError("This file is not a recognizable delivery-status notice")
+    content_hash = hashlib.sha256(raw).hexdigest()
+    with engine.connection() as conn:
+        prior = conn.execute(
+            "SELECT result FROM delivery_imports WHERE content_hash=?", (content_hash,)
+        ).fetchone()
+    if prior:
+        result = json.loads(prior[0])
+        result["duplicate_import"] = True
+        return result
+
+    original_message_id = ""
+    records = []
+    for part in message.walk():
+        if part.get_content_type() == "message/rfc822":
+            nested = part.get_payload()
+            nested = nested[0] if isinstance(nested, list) and nested else nested
+            if nested:
+                original_message_id = str(nested.get("Message-ID") or "").strip(" <>")
+        if part.get_content_type() != "message/delivery-status":
+            continue
+        blocks = part.get_payload()
+        if not isinstance(blocks, list):
+            blocks = [part]
+        for block in blocks:
+            recipient_value = str(block.get("Final-Recipient") or block.get("Original-Recipient") or "")
+            recipient = recipient_value.split(";", 1)[-1].strip(" .,;:<>").casefold()
+            status_code = str(block.get("Status") or "").strip()
+            if not EMAIL.fullmatch(recipient) or not re.fullmatch(r"[245]\.\d{1,3}\.\d{1,3}", status_code):
+                continue
+            records.append({
+                "recipient": recipient,
+                "status_code": status_code,
+                "action": str(block.get("Action") or "unknown").strip().casefold(),
+                "diagnostic": str(block.get("Diagnostic-Code") or "").strip()[:300],
+            })
+    if not records:
+        raise ValueError("The delivery notice has no machine-readable recipient and status code")
+    results = []
+    for record in records:
+        recipient, status_code = record["recipient"], record["status_code"]
+        with engine.connection() as conn:
+            matches = conn.execute(
+                "SELECT id,campaign_id,provider_id FROM outreach_messages WHERE lower(recipient)=? AND status IN ('sent','failed') ORDER BY sent_at DESC,id DESC",
+                (recipient,),
+            ).fetchall()
+        if original_message_id:
+            exact = [row for row in matches if str(row[2]).strip(" <>") == original_message_id]
+            if exact:
+                matches = exact
+        sent = matches[0] if len(matches) == 1 else None
+        if not sent:
+            match_status = "unmatched" if not matches else "ambiguous_review"
+            result_status = match_status
+            note = "No unique original send and recipient match; queued for review and nothing was suppressed."
+            message_id, campaign_id = None, ""
+        else:
+            message_id, campaign_id, _ = sent
+            match_status = "matched"
+            if status_code == "5.1.1":
+                reason = f"Confirmed mailbox-not-found DSN {status_code}"
+                suppress(recipient, reason)
+                with engine.connection() as conn:
+                    conn.execute(
+                        "UPDATE outreach_messages SET status='failed',error=? WHERE id=?",
+                        ((record["diagnostic"] or reason)[:500], message_id),
+                    )
+                intelligence.record_outcome({
+                    "email": recipient,
+                    "campaign_id": campaign_id,
+                    "outcome": "bounced",
+                    "note": f"Imported DSN {status_code}: {record['diagnostic']}"[:500],
+                })
+                result_status = "hard_bounce_suppressed"
+                note = "Confirmed 5.1.1 mailbox-not-found bounce; only the exact address was suppressed."
+            elif status_code.startswith("4."):
+                result_status = "temporary_review"
+                note = "Temporary delivery failure retained for review; provider acceptance remains recorded."
+            else:
+                result_status = "policy_or_other_review"
+                note = "Permanent or policy failure retained for review; only 5.1.1 automatically suppresses an address."
+        with engine.connection() as conn:
+            conn.execute(
+                "INSERT OR IGNORE INTO delivery_events(content_hash,outreach_message_id,campaign_id,recipient,action,status_code,diagnostic,match_status,event_kind,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
+                (content_hash, message_id, campaign_id, recipient, record["action"], status_code, record["diagnostic"], match_status, "failure", now()),
+            )
+        results.append({**record, "status": result_status, "campaign_id": campaign_id, "match_status": match_status, "message": note})
+    result = {
+        **results[0],
+        "recipients": results,
+        "recipient_count": len(results),
+        "source_message_id": original_message_id,
+        "duplicate_import": False,
+    }
+    with engine.connection() as conn:
+        conn.execute(
+            "INSERT INTO delivery_imports(content_hash,imported_at,source_message_id,result) VALUES(?,?,?,?)",
+            (content_hash, now(), original_message_id, json.dumps(result, ensure_ascii=False)),
+        )
+    return result
+
+
 def _save_campaign(campaign):
     campaign["updated_at"] = now()
     payload = {key: value for key, value in campaign.items() if key != "messages"}
@@ -573,62 +754,96 @@ def _zoho_send(recipient, subject, body):
     return str(result.get("data", {}).get("messageId") or result.get("data", {}).get("mailId") or "accepted")
 
 
+def send_via_zoho(recipient, subject, body):
+    """Send one validated plain-text message through the connected Zoho OAuth account."""
+    recipient = str(recipient or "").strip().casefold()
+    subject = str(subject or "").strip()
+    body = str(body or "").strip()
+    if not EMAIL.fullmatch(recipient):
+        raise ValueError("Enter a valid recipient email")
+    if not 1 <= len(subject) <= 500 or not 1 <= len(body) <= 2 * 1024 * 1024:
+        raise ValueError("Enter a subject and plain-text message body")
+    return _zoho_send(recipient, subject, body)
+
+
+def _provider_send(provider, recipient, subject, body):
+    return send_via_zoho(recipient, subject, body)
+
+
+def _recipient_gate(campaign, message_id, recipient, *, domain_check=None):
+    key = str(message_id)
+    identity = campaign.get("lead_identities", {}).get(key, {"entity_id": campaign.get("lead_entities", {}).get(key, "")})
+    return intelligence.preflight(
+        identity, recipient, campaign.get("job_id", ""), campaign["id"], domain_check=domain_check
+    )
+
+
 def start(campaign_id, confirmation=False):
     if confirmation is not True:
         raise ValueError("Review the campaign and explicitly confirm sending")
-    if not provider_status()["connected"]:
-        raise ValueError(provider_status()["message"])
     with LOCK:
-        if len(STOPS) >= 5:
-            raise ValueError("Five campaigns are already sending. Pause one before starting another.")
+        if STOPS:
+            raise ValueError("One reviewed Zoho message is already sending. Wait for it to finish before approving another.")
         campaign = _campaign(campaign_id)
         if not campaign or campaign["status"] not in ("draft", "paused"):
             raise ValueError("Choose a draft or paused campaign")
+        provider = "zoho"
+        connected = provider_status().get("connected")
+        if not connected:
+            raise ValueError(f"Connect and test {provider.title()} before sending this campaign")
         if campaign["drafting"]:
             raise ValueError("Local AI is still drafting this campaign. Finish drafting before approving.")
         if not campaign["ready"]:
             raise ValueError("No reviewed messages are ready to send in this campaign")
+        if campaign["ready"] > 1:
+            raise ValueError(
+                "Zoho campaign automation is disabled for bulk or marketing mail. Keep these drafts as manual follow-up tasks, or prepare a one-recipient permitted correspondence campaign."
+            )
         utc_day = now()[:10]
         with engine.connection() as conn:
             sent_today = conn.execute(
                 "SELECT count(*) FROM outreach_messages WHERE status='sent' AND substr(sent_at,1,10)=?",
                 (utc_day,),
             ).fetchone()[0]
-        if campaign["ready"] > max(0, DAILY_SEND_CAP - sent_today):
-            raise ValueError(
-                f"Daily safety cap is {DAILY_SEND_CAP}. {sent_today} messages were already sent today; reduce or postpone this campaign."
-            )
         blocked = []
+        approved = []
         for message in campaign["messages"]:
             if message["status"] not in ("draft", "queued"):
                 continue
-            gate = intelligence.preflight(
-                campaign.get("lead_identities", {}).get(str(message["id"]), {"entity_id": campaign.get("lead_entities", {}).get(str(message["id"]), "")}),
-                message["recipient"],
-                campaign.get("job_id", ""),
-                campaign_id,
+            gate = _recipient_gate(campaign, message["id"], message["recipient"])
+            if gate["eligible"]:
+                approved.append(message)
+            else:
+                blocked.append((message, ", ".join(gate["issues"])))
+        if not approved:
+            reasons = [f"{message['recipient']}: {reason}" for message, reason in blocked[:5]]
+            raise ValueError("Safety gate blocked this campaign: " + " | ".join(reasons))
+        if len(approved) > max(0, DAILY_SEND_CAP - sent_today):
+            raise ValueError(
+                f"Daily safety cap is {DAILY_SEND_CAP}. {sent_today} messages were already sent today; reduce or postpone this campaign."
             )
-            if not gate["eligible"]:
-                blocked.append(f"{message['recipient']}: {', '.join(gate['issues'])}")
+        if campaign_id in STOPS:
+            raise ValueError("This campaign is already sending")
         if blocked:
-            raise ValueError("Safety gate blocked this campaign: " + " | ".join(blocked[:5]))
+            with engine.connection() as conn:
+                conn.executemany(
+                    "UPDATE outreach_messages SET status='blocked',error=? WHERE id=?",
+                    [(reason[:500], message["id"]) for message, reason in blocked],
+                )
         content = Counter(
             (message.get("subject", "").strip().casefold(), message.get("body", "").strip().casefold())
-            for message in campaign["messages"]
-            if message["status"] in ("draft", "queued")
+            for message in approved
         )
         campaign["safety_review"] = {
             "checked_at": now(),
             "sent_today": sent_today,
             "daily_cap": DAILY_SEND_CAP,
             "duplicate_message_groups": sum(count > 1 for count in content.values()),
-            "approved_recipients": campaign["ready"],
+            "approved_recipients": len(approved),
         }
-        if campaign_id in STOPS:
-            raise ValueError("This campaign is already sending")
         stop = threading.Event()
         STOPS[campaign_id] = stop
-    campaign.update(status="running", message=f"Sending {campaign['ready']} approved one-to-one messages")
+    campaign.update(status="running", message=f"Sending {len(approved)} approved one-to-one messages")
     _save_campaign(campaign)
     # Return control to the UI before network sending begins. This also makes
     # two explicitly approved campaigns register atomically as active.
@@ -654,24 +869,36 @@ def _run(campaign, stop):
             with engine.connection() as conn:
                 row = conn.execute("SELECT id,recipient,subject,body FROM outreach_messages WHERE campaign_id=? AND status IN ('draft','queued') ORDER BY id LIMIT 1", (campaign["id"],)).fetchone()
             if not row:
-                campaign.update(status="complete", message="Approved outreach campaign complete")
+                current = _campaign(campaign["id"])
+                campaign.update(status="complete", message=f"Campaign complete. {current['sent']} sent, {current['blocked']} blocked.")
                 break
             message_id, recipient, subject, body = row
+            domain_check = mail_domain_status(recipient.rsplit("@", 1)[-1])
+            gate = _recipient_gate(campaign, message_id, recipient, domain_check=domain_check)
+            if stop.is_set():
+                break
+            if not gate["eligible"]:
+                _update_message(message_id, "blocked", error=", ".join(gate["issues"]))
+                continue
+            if domain_check["status"] == "temporary_dns_unavailable":
+                campaign.update(status="paused", message=f"Mail routing for {recipient} could not be checked. Resume to retry.")
+                break
             try:
-                provider_id = _zoho_send(recipient, subject, body)
+                provider = campaign.get("provider", "zoho")
+                provider_id = _provider_send(provider, recipient, subject, body)
                 with engine.connection() as conn:
                     conn.execute("UPDATE outreach_messages SET status='sent',attempts=attempts+1,provider_id=?,sent_at=?,error='' WHERE id=?", (provider_id, now(), message_id))
-                intelligence.record_outcome({"company_id": campaign.get("lead_entities", {}).get(str(message_id), ""), "email": recipient, "campaign_id": campaign["id"], "outcome": "sent", "note": "Accepted by Zoho Mail API"})
-            except (HTTPError, URLError, OSError, RuntimeError) as exc:
+                intelligence.record_outcome({"company_id": campaign.get("lead_entities", {}).get(str(message_id), ""), "email": recipient, "campaign_id": campaign["id"], "outcome": "sent", "note": f"Accepted by {provider.title()} API"})
+            except (HTTPError, URLError, OSError, RuntimeError, ValueError) as exc:
                 with engine.connection() as conn:
                     conn.execute("UPDATE outreach_messages SET status='failed',attempts=attempts+1,error=? WHERE id=?", (str(exc)[:500], message_id))
                 intelligence.record_outcome({"company_id": campaign.get("lead_entities", {}).get(str(message_id), ""), "email": recipient, "campaign_id": campaign["id"], "outcome": "failed", "note": str(exc)[:300]})
-                campaign.update(status="paused", message="Paused after a Zoho/API error; inspect the failed message before resuming")
+                campaign.update(status="paused", message=f"Paused after a {campaign.get('provider', 'zoho').title()} API error; inspect the failed message before resuming")
                 break
             current = _campaign(campaign["id"])
             campaign["sent"] = sum(m["status"] == "sent" for m in current["messages"])
             campaign["failed"] = sum(m["status"] == "failed" for m in current["messages"])
-            campaign["remaining"] = campaign["total"] - campaign["sent"] - campaign["failed"]
+            campaign["remaining"] = current["remaining"]
             campaign["message"] = f"Sent {campaign['sent']} of {campaign['total']} approved messages"
             _save_campaign(campaign)
             stop.wait(random.uniform(campaign["delay_min_seconds"], campaign["delay_max_seconds"]))

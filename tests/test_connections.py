@@ -238,6 +238,25 @@ class ConnectionTests(unittest.TestCase):
             values[1][connections.EMPLOYEE_SHEET_COLUMNS.index("employee_linkedin")],
         )
 
+    def test_manual_linkedin_review_task_is_kept_without_profile_url(self):
+        _, values = connections._employee_sheet_tab({
+            "params": {"niche": "rentals", "location": "Dallas"},
+            "employees": [{
+                "company_name": "Example Rentals",
+                "employee_name": "Jane Doe",
+                "title": "Property Manager",
+                "manual_search_url": "https://www.linkedin.com/search/results/people/?keywords=Jane+Doe",
+                "manual_review_required": True,
+                "source_url": "https://example.test/team",
+                "source_excerpt": "Jane Doe — Property Manager",
+            }],
+        })
+        self.assertEqual(2, len(values))
+        self.assertEqual(
+            "https://www.linkedin.com/search/results/people/?keywords=Jane+Doe",
+            values[1][connections.EMPLOYEE_SHEET_COLUMNS.index("manual_search_url")],
+        )
+
     def test_enabled_places_provider_maps_api_fields_to_lead(self):
         connections._write(
             "google_places",

@@ -15,6 +15,7 @@ import ai_teaching
 import engine
 import evidence_compiler
 import niche_catalog
+import organizer
 import research_packs
 import sequence_engine
 from contacts import now
@@ -541,9 +542,15 @@ def _aliases(row):
     phone = _phone(row.get("phone"))
     name = _normal(row.get("name"))
     city = _normal(row.get("city") or row.get("search_location"))
+    address = _normal(row.get("address"))
     aliases = []
-    if domain:
-        aliases.append("domain:" + domain)
+    # A domain identifies a parent brand, not necessarily one operating branch.
+    # Keep it paired with branch evidence so Dallas and Houston locations do not
+    # collapse into one company simply because they share a corporate website.
+    if domain and address:
+        aliases.append("domain-address:" + domain + ":" + address)
+    elif domain and city:
+        aliases.append("domain-place:" + domain + ":" + city)
     if phone and name:
         aliases.append("phone-name:" + phone + ":" + name[:40])
     if name and city:
@@ -562,16 +569,12 @@ def _entity_id(conn, row):
         ).fetchone()
         if found:
             return found[0], aliases
-    seed = (
-        aliases[0]
-        if aliases
-        else "record:"
-        + "|".join(
-            (
-                _normal(row.get("name")),
-                _normal(row.get("address")),
-                _normal(row.get("city")),
-            )
+    seed = aliases[0] if aliases else "record:" + "|".join(
+        (
+            _normal(row.get("name")),
+            _normal(row.get("address")),
+            _normal(row.get("city")),
+            _domain(row.get("website")),
         )
     )
     return "company-" + hashlib.sha256(seed.encode()).hexdigest()[:20], aliases
@@ -763,8 +766,8 @@ def _latest_outcomes(conn, company_id, email):
     return [
         row[0]
         for row in conn.execute(
-            "SELECT outcome FROM intelligence_outcomes WHERE company_id=? OR (email<>'' AND email=?) ORDER BY created_at DESC,id DESC LIMIT 20",
-            (company_id, email.casefold()),
+            "SELECT outcome FROM intelligence_outcomes WHERE (email<>'' AND email=?) OR (email='' AND company_id<>'' AND company_id=?) ORDER BY created_at DESC,id DESC LIMIT 20",
+            (email.casefold(), company_id),
         )
     ]
 
@@ -1245,7 +1248,15 @@ def record_outcome(data):
                     "Out-of-office reply recorded; sequence paused until the stated return date.",
                 ),
             }
+            exact_contact_terminal = outcome in TERMINAL_SUPPRESSIONS and bool(email)
             action, priority, reason = (
+                (
+                    "contact_discovery",
+                    95,
+                    f"The exact address has outcome {outcome}; review the next published contact.",
+                )
+                if exact_contact_terminal
+                else
                 action_map.get(
                     outcome,
                     ("suppress", 100, f"Outcome requires suppression: {outcome}."),
@@ -1794,8 +1805,30 @@ def variant_index(row, campaign_id, count, position=None):
     return index
 
 
-def preflight(row, address, job_id="", exclude_campaign_id=""):
+def preflight(row, address, job_id="", exclude_campaign_id="", *, domain_check=None):
     issues = []
+    address = address.strip().casefold()
+    if domain_check is None:
+        verification = _json(row.get("verification"), {})
+        candidates = _json(verification.get("email_candidates"), [])
+        domain_check = next(
+            (
+                item for item in candidates
+                if isinstance(item, dict) and _clean(item.get("email")).casefold() == address
+            ),
+            None,
+        )
+        if domain_check is None and _clean(row.get("email")).casefold() == address:
+            domain_check = _json(verification.get("email_domain"), {})
+    kind = organizer.classify_email(address)["type"]
+    if kind in {"invalid", "support", "automated"}:
+        issues.append({
+            "invalid": "invalid recipient email",
+            "support": "support or compliance inbox excluded from outreach",
+            "automated": "automated inbox excluded from outreach",
+        }[kind])
+    if (domain_check or {}).get("status") in organizer.UNSENDABLE_MAIL_DOMAIN_STATUSES:
+        issues.append("recipient domain has no usable mail route")
     company_id = _clean(row.get("entity_id"))
     if _clean(row.get("next_best_action")) in {
         "suppress",
@@ -1817,6 +1850,13 @@ def preflight(row, address, job_id="", exclude_campaign_id=""):
         ).fetchone()
         if dnc:
             issues.append(f"do-not-contact {dnc[0]} suppression: {dnc[1]}")
+        else:
+            suppression = conn.execute(
+                "SELECT reason FROM outreach_suppressions WHERE email=?",
+                (address,),
+            ).fetchone()
+            if suppression:
+                issues.append(f"email suppression: {suppression[0]}")
         mailbox = conn.execute(
             "SELECT status,provider FROM email_verifications WHERE email=? ORDER BY checked_at DESC,id DESC LIMIT 1",
             (address.casefold(),),

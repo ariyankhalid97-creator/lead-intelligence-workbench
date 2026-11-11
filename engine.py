@@ -46,7 +46,7 @@ LOG = logging.getLogger("leadfinder")
 
 @contextmanager
 def connection():
-    DB.parent.mkdir(exist_ok=True)
+    DB.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(DB, timeout=15)
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
@@ -127,6 +127,9 @@ def validate(params):
     source = params.get("source", "hybrid")
     if source not in ("hybrid", "osm", "google", "browser", "web", "websites"):
         raise ValueError("Choose a supported source")
+    search_mode = str(params.get("search_mode", "new")).strip().casefold()
+    if search_mode not in {"new", "refresh"}:
+        raise ValueError("Choose find new businesses or refresh saved businesses")
     country = str(params.get("country", "US")).strip()
     if country not in {"US", "SG", "MY", "AU", "manual"}:
         raise ValueError("Choose a supported country context or manual location")
@@ -218,6 +221,7 @@ def validate(params):
         "offer_segment_label": offer_segment_label,
         "live_sheet_sync": params.get("live_sheet_sync", False),
         "continue_previous": params.get("continue_previous", True),
+        "search_mode": search_mode,
         "reference_ids": reference_ids,
     }
 
@@ -507,6 +511,24 @@ def start(params):
     import intelligence
 
     niche_pack = intelligence.ensure_niche_pack(params["niche"])
+    if params.get("search_mode") == "refresh":
+        lookup = dict(params, continue_previous=True)
+        previous = _continuation_rows(_continuation_context(lookup))
+        websites = list(dict.fromkeys(
+            lf.normalize_website(str(row.get("website", "")))
+            for row in previous
+            if lf.normalize_website(str(row.get("website", "")))
+        ))[:100]
+        if not websites:
+            raise ValueError(
+                "No saved business websites match this niche and geography yet. Run Find new businesses first."
+            )
+        params.update(
+            source="websites",
+            urls="\n".join(websites),
+            continue_previous=False,
+            limit=min(params["limit"], len(websites)),
+        )
     existing_phrases = [
         item.strip() for item in params.get("phrases", "").splitlines() if item.strip()
     ]
@@ -1560,11 +1582,30 @@ def download(job_id, kind):
         )
     if kind == "csv":
         rows = job["rows"]
-        names = list(asdict(lf.Lead()))
+        review_fields = [
+            "entity_id", "parent_brand_id", "operating_entity_id",
+            "contact_review_status", "permission_to_send", "send_eligible",
+            "selected_contact_email", "selected_contact_source",
+        ]
+        names = list(asdict(lf.Lead())) + review_fields
         stream = io.StringIO(newline="")
         writer = csv.DictWriter(stream, fieldnames=names, extrasaction="ignore")
         writer.writeheader()
         for row in rows:
+            review = {}
+            if row.get("entity_id"):
+                try:
+                    import review_workspace
+                    selected = (review_workspace.contact_decisions(row["entity_id"]) or [{}])[0]
+                    review = {
+                        "contact_review_status": selected.get("contact_review", {}).get("decision", "pending"),
+                        "permission_to_send": selected.get("contact_review", {}).get("permission_to_send", False),
+                        "send_eligible": selected.get("send_eligible", False),
+                        "selected_contact_email": selected.get("email", ""),
+                        "selected_contact_source": selected.get("source_url", ""),
+                    }
+                except Exception:
+                    review = {}
             writer.writerow(
                 {
                     k: (
@@ -1572,7 +1613,7 @@ def download(job_id, kind):
                         if str(v).lstrip().startswith(("=", "+", "-", "@"))
                         else v
                     )
-                    for k, v in row.items()
+                    for k, v in {**row, **review}.items()
                 }
             )
         return (

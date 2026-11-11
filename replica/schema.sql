@@ -280,6 +280,50 @@ CREATE TABLE IF NOT EXISTS email_verifications (
   evidence TEXT NOT NULL DEFAULT '{}'
 );
 CREATE INDEX IF NOT EXISTS idx_email_verification_latest ON email_verifications(email,checked_at DESC);
+CREATE TABLE IF NOT EXISTS search_presets (
+  id TEXT PRIMARY KEY, name TEXT NOT NULL, offer TEXT NOT NULL DEFAULT '',
+  target_role TEXT NOT NULL DEFAULT '', geography TEXT NOT NULL DEFAULT '',
+  exclusions TEXT NOT NULL DEFAULT '[]', sources TEXT NOT NULL DEFAULT '[]',
+  created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS lead_review_decisions (
+  company_id TEXT NOT NULL, contact_key TEXT NOT NULL DEFAULT '',
+  decision TEXT NOT NULL, permission_to_send INTEGER NOT NULL DEFAULT 0,
+  note TEXT NOT NULL DEFAULT '', reviewer TEXT NOT NULL DEFAULT 'local_user',
+  updated_at TEXT NOT NULL, PRIMARY KEY(company_id,contact_key)
+);
+CREATE TABLE IF NOT EXISTS linkedin_review_decisions (
+  id TEXT PRIMARY KEY, company_id TEXT NOT NULL DEFAULT '',
+  operating_entity_id TEXT NOT NULL DEFAULT '', candidate_url TEXT NOT NULL,
+  person_name TEXT NOT NULL DEFAULT '', role TEXT NOT NULL DEFAULT '',
+  current_company TEXT NOT NULL DEFAULT '', location TEXT NOT NULL DEFAULT '',
+  decision TEXT NOT NULL, evidence_note TEXT NOT NULL DEFAULT '', updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS claim_feedback (
+  evidence_id TEXT NOT NULL, company_id TEXT NOT NULL, decision TEXT NOT NULL,
+  correction TEXT NOT NULL DEFAULT '', note TEXT NOT NULL DEFAULT '', updated_at TEXT NOT NULL,
+  PRIMARY KEY(evidence_id,company_id)
+);
+CREATE TABLE IF NOT EXISTS delivery_imports (
+  content_hash TEXT PRIMARY KEY, imported_at TEXT NOT NULL,
+  source_message_id TEXT NOT NULL DEFAULT '', result TEXT NOT NULL DEFAULT '{}'
+);
+CREATE TABLE IF NOT EXISTS delivery_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, content_hash TEXT NOT NULL,
+  outreach_message_id INTEGER, campaign_id TEXT NOT NULL DEFAULT '',
+  recipient TEXT NOT NULL DEFAULT '', action TEXT NOT NULL DEFAULT '',
+  status_code TEXT NOT NULL DEFAULT '', diagnostic TEXT NOT NULL DEFAULT '',
+  match_status TEXT NOT NULL, event_kind TEXT NOT NULL DEFAULT 'failure',
+  created_at TEXT NOT NULL, UNIQUE(content_hash,recipient,status_code,action)
+);
+CREATE INDEX IF NOT EXISTS idx_delivery_event_review ON delivery_events(match_status,created_at DESC);
+CREATE TABLE IF NOT EXISTS manual_followup_tasks (
+  id TEXT PRIMARY KEY, company_id TEXT NOT NULL DEFAULT '',
+  title TEXT NOT NULL, due_date TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'open', note TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_followup_due ON manual_followup_tasks(status,due_date,updated_at DESC);
 CREATE TABLE IF NOT EXISTS outreach_sequence_steps (
   sequence_id TEXT NOT NULL,
   step_number INTEGER NOT NULL,

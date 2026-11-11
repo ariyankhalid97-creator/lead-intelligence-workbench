@@ -1,5 +1,25 @@
 # Changelog
 
+## 2.7.0 — 2026-11-11
+
+### Daily Leads & Review workspace
+
+- Consolidate the desktop into Discover, Runs, Leads & Review, Follow-up and Settings while preserving immutable run history and the organized research library.
+- Add a branch-aware review queue with separate published-address, reviewed-contact and permission-to-send states, alternate contact selection, LinkedIn decisions and evidence-claim feedback.
+- Add reusable search presets, distinct new-business and saved-business refresh modes, manual follow-up tasks with due dates, and source-preserving branch splits.
+
+### Identity, delivery and evaluation safety
+
+- Keep shared-domain branches under one parent brand without merging their operating records; exact-mailbox failures no longer halt sibling branch sequences.
+- Parse every structured DSN recipient, match original message and recipient, deduplicate imports, preserve provider acceptance separately and queue ambiguous notices.
+- Replace the answer-leaking model exam with 51 frozen, hand-reviewed blind cases executed in bounded task batches.
+
+### Windows startup reliability
+
+- Create a clean installation's workspace parents before opening SQLite.
+- Accept the actual application version in the Electron backend health check instead of rejecting releases newer than the legacy `2.0` value.
+- Report the real build, database and workspace paths through local health diagnostics and retain the existing repair flow for interrupted setup.
+
 ## 2.6.0 — 2026-10-30
 
 ### Professional workspace design

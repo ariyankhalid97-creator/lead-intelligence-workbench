@@ -38,7 +38,7 @@ test("discovery, history, sources and accessibility at desktop/mobile", async ({
   await expect(
     page.getByRole("heading", { name: "Google Maps · Chrome" }),
   ).toBeVisible();
-  await page.getByRole("link", { name: /Business registries/ }).click();
+  await page.goto("/#registries");
   await expect(
     page.getByRole("heading", { name: "Search reviewed business registries." }),
   ).toBeVisible();
@@ -471,7 +471,7 @@ test("historical library prepares a separate recheck without starting it", async
     [peak.city, peak.state].filter(Boolean).join(", "),
   );
   expect(starts).toBe(0);
-  await page.getByRole("link", { name: /Your research library/ }).click();
+  await page.goto("/#library");
   await page
     .getByLabel("Search research collections and historical prospects", {
       exact: true,
@@ -646,7 +646,7 @@ test("compiled research stays grouped, opens full details and feeds outreach", a
     "Connected company history",
   );
   await page.getByRole("button", { name: "Close" }).click();
-  await page.getByRole("link", { name: /Outreach campaigns/ }).click();
+  await page.getByRole("link", { name: /Follow-up/ }).click();
   await page.getByRole("tab", { name: "New campaign" }).click();
   await expect(page.locator("#campaignJob")).toContainText(
     "Roofing · Dallas, Texas · 1 organized prospects",

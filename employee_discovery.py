@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import threading
 import re
+import json
 from datetime import datetime
+from urllib.parse import quote_plus
 
 import browser_session
 import connections
@@ -141,9 +143,9 @@ def get(job_id: str) -> dict:
             "status": "not_started",
             "progress": 0,
             "companies_checked": 0,
-            "companies_total": sum(bool(row.get("linkedin")) for row in job.get("rows", [])),
+            "companies_total": sum(bool(row.get("website") or row.get("linkedin")) for row in job.get("rows", [])),
             "profiles_found": len(employees),
-            "message": "Ready after company LinkedIn URLs have been verified.",
+            "message": "Ready after company websites or LinkedIn company URLs have been verified.",
             "employees": employees[:50],
         }
     return {
@@ -162,16 +164,24 @@ def _settings(job: dict, params: dict) -> tuple[list[dict], int]:
     per_company = max(1, min(int(params.get("per_company", 25) or 25), 100))
     companies = []
     seen = set()
-    for row in job.get("rows", []):
+    for row_index, row in enumerate(job.get("rows", [])):
         url = browser_session._canonical_linkedin_company_url(row.get("linkedin", ""))
-        if not url or url in seen:
+        website = str(row.get("website", "")).strip()
+        identity = url or website
+        if not identity or identity in seen:
             continue
-        seen.add(url)
-        companies.append({"name": str(row.get("name", ""))[:180], "linkedin": url})
+        seen.add(identity)
+        companies.append({
+            "name": str(row.get("name", ""))[:180],
+            "linkedin": url,
+            "website": website[:1500],
+            "city": str(row.get("city") or row.get("search_location") or "")[:160],
+            "row_index": row_index,
+        })
         if len(companies) >= company_limit:
             break
     if not companies:
-        raise ValueError("No verified LinkedIn company URLs are available yet. Finish second-round verification first.")
+        raise ValueError("No company website or verified LinkedIn company URL is available yet.")
     return companies, per_company
 
 
@@ -191,7 +201,7 @@ def start(params: dict) -> str:
         "status": "queued",
         "created_at": _now(),
         "updated_at": _now(),
-        "message": "Preparing company People pages",
+        "message": "Preparing website-sourced decision-maker review tasks",
         "progress": 0,
         "companies": companies,
         "companies_total": len(companies),
@@ -254,6 +264,69 @@ def _sync(job: dict, task: dict) -> None:
         task.update(sheet_status="error", sheet_error=str(exc)[:300])
 
 
+def _website_people(row: dict, company: dict) -> list[dict]:
+    try:
+        evidence = json.loads(row.get("evidence") or "[]")
+    except (ValueError, TypeError):
+        evidence = []
+    people = {}
+    for item in evidence if isinstance(evidence, list) else []:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("contact_name") or "").strip()
+        role = str(item.get("contact_role") or "").strip()
+        if not (name and role):
+            continue
+        key = (name.casefold(), role.casefold())
+        people[key] = {
+            "employee_name": name[:180],
+            "headline": role[:300],
+            "title": role[:160],
+            "company_name": company.get("name", ""),
+            "company_linkedin": company.get("linkedin", ""),
+            "company_website": company.get("website", ""),
+            "source_url": str(item.get("url") or company.get("website") or "")[:1500],
+            "source_excerpt": str(item.get("excerpt") or "")[:500],
+            "observed_at": str(item.get("observed_at") or _now()),
+            "basis": "name_and_role_published_together_on_company_website",
+            "manual_review_required": True,
+        }
+    if row.get("decision_maker") and row.get("decision_maker_role"):
+        key = (str(row["decision_maker"]).casefold(), str(row["decision_maker_role"]).casefold())
+        people.setdefault(key, {
+            "employee_name": str(row["decision_maker"])[:180],
+            "headline": str(row["decision_maker_role"])[:300],
+            "title": str(row["decision_maker_role"])[:160],
+            "company_name": company.get("name", ""),
+            "company_linkedin": company.get("linkedin", ""),
+            "company_website": company.get("website", ""),
+            "source_url": company.get("website", ""),
+            "source_excerpt": "Published name and role retained from the company website.",
+            "observed_at": row.get("checked_at") or _now(),
+            "basis": "published_company_website_role",
+            "manual_review_required": True,
+        })
+    result = []
+    for person in people.values():
+        query = " ".join(filter(None, [person.get("employee_name"), company.get("name"), company.get("city")]))
+        person["manual_search_url"] = "https://www.linkedin.com/search/results/people/?keywords=" + quote_plus(query)
+        result.append(_classify_profile(person))
+    if not result:
+        query = " ".join(filter(None, [company.get("name"), company.get("city"), "owner OR manager OR director"]))
+        result.append(_classify_profile({
+            "employee_name": "Decision maker review",
+            "headline": "Use LinkedIn Current company and Locations filters",
+            "company_name": company.get("name", ""),
+            "company_linkedin": company.get("linkedin", ""),
+            "company_website": company.get("website", ""),
+            "manual_search_url": "https://www.linkedin.com/search/results/people/?keywords=" + quote_plus(query),
+            "basis": "manual_linkedin_review_no_published_company_bio",
+            "manual_review_required": True,
+            "observed_at": _now(),
+        }))
+    return result
+
+
 def _run(job_id: str, cancel: threading.Event) -> None:
     try:
         job = engine.get_job(job_id, events=False)
@@ -264,32 +337,24 @@ def _run(job_id: str, cancel: threading.Event) -> None:
             if isinstance(row, dict)
         ]
         employee_indexes = {
-            row.get("employee_linkedin"): index
+            (row.get("company_name", "").casefold(), row.get("employee_name", "").casefold()): index
             for index, row in enumerate(employees)
-            if row.get("employee_linkedin")
         }
-        task.update(status="running", message="Checking visible LinkedIn company People pages", updated_at=_now())
+        task.update(status="running", message="Building a manual LinkedIn review queue from company website evidence", updated_at=_now())
         _save(job, task, employees)
         companies = task.get("companies", [])
         for index in range(int(task.get("next_company_index", 0)), len(companies)):
             if cancel.is_set():
-                task.update(status="cancelled", message="Employee discovery stopped; collected profiles were retained")
+                task.update(status="cancelled", message="Review-queue preparation stopped; retained tasks were saved")
                 break
             company = companies[index]
-            result = browser_session.discover_linkedin_employees(
-                company.get("linkedin", ""),
-                company.get("name", ""),
-                int(task.get("per_company", 25)),
-                cancel,
-            )
-            for profile in result.get("profiles", []):
-                url = profile.get("employee_linkedin")
-                if not url:
-                    continue
-                profile = _classify_profile(profile)
-                existing_index = employee_indexes.get(url)
+            row_index = int(company.get("row_index", -1))
+            source_row = job.get("rows", [])[row_index] if 0 <= row_index < len(job.get("rows", [])) else {}
+            for profile in _website_people(source_row, company)[: int(task.get("per_company", 25))]:
+                key = (str(profile.get("company_name", "")).casefold(), str(profile.get("employee_name", "")).casefold())
+                existing_index = employee_indexes.get(key)
                 if existing_index is None:
-                    employee_indexes[url] = len(employees)
+                    employee_indexes[key] = len(employees)
                     employees.append(profile)
                     continue
                 existing = employees[existing_index]
@@ -302,27 +367,14 @@ def _run(job_id: str, cancel: threading.Event) -> None:
                     },
                 }
                 employees[existing_index] = _classify_profile(merged)
-            if result.get("status") in {"manual_checkpoint", "login_required"}:
-                task.update(
-                    status="waiting",
-                    message=result.get("browser_checkpoint") or result.get("error") or "Complete the LinkedIn browser checkpoint, then continue",
-                    next_company_index=index,
-                    updated_at=_now(),
-                )
-                _sync(job, task)
-                _save(job, task, employees)
-                return
-            if result.get("status") in {"failed", "invalid_company_url"}:
-                task.setdefault("failures", []).append({"company": company.get("name", ""), "error": result.get("error", result.get("status", "failed"))})
-                task["failures"] = task["failures"][-100:]
             task.update(
                 companies_checked=index + 1,
                 next_company_index=index + 1,
                 progress=int(100 * (index + 1) / max(1, len(companies))),
                 message=(
-                    f"Checked {index + 1} of {len(companies)} companies · "
-                    f"retained {len(employees)} profiles · "
-                    f"classified {sum(bool(row.get('title')) for row in employees)} titles"
+                    f"Prepared {index + 1} of {len(companies)} company reviews · "
+                    f"{len(employees)} decision-maker tasks · "
+                    f"{sum(bool(row.get('title')) for row in employees)} published roles"
                 ),
                 updated_at=_now(),
             )
@@ -341,8 +393,8 @@ def _run(job_id: str, cancel: threading.Event) -> None:
                 status="complete",
                 progress=100,
                 message=(
-                    f"Employee discovery complete · {len(employees)} profiles retained · "
-                    f"{sum(bool(row.get('title')) for row in employees)} titles classified"
+                    f"Review queue complete · {len(employees)} decision-maker tasks · "
+                    f"{sum(bool(row.get('title')) for row in employees)} published roles"
                 ),
                 updated_at=_now(),
             )

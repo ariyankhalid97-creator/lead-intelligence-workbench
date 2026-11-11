@@ -278,7 +278,11 @@ def _verify(index, row, cancel):
                     continue
                 match = re.search(r'https?://(?:www\.)?' + re.escape(domain) + r'/[^"\'<>\s]+', body, re.I)
                 if match:
-                    socials[social] = {"url": match.group(0)[:1500], "status": "published_on_website"}
+                    candidate_url = match.group(0)[:1500]
+                    if social == "linkedin":
+                        candidate_url = browser_session._canonical_linkedin_company_url(candidate_url)
+                    if candidate_url:
+                        socials[social] = {"url": candidate_url, "status": "published_on_website"}
         except Exception as exc:
             website_result["error"] = str(exc)[:300]
             if "Temporary DNS failure" in str(exc):
@@ -348,6 +352,10 @@ def _verify(index, row, cancel):
         "manual_decision_maker_search_url": (
             "https://www.google.com/search?q="
             + quote(f'"{row.get("name", "")}" decision maker site:linkedin.com/in')
+        ),
+        "manual_linkedin_company_search_url": (
+            "https://www.linkedin.com/search/results/companies/?keywords="
+            + quote(" ".join(filter(None, [str(row.get("name", "")), str(location)])))
         ),
         "ads": {
             "status": ads_status,

@@ -1,6 +1,35 @@
 * {
   box-sizing: border-box;
 }
+
+.contact-review-card {
+  margin: 12px 0;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--surface);
+  padding: 12px 14px;
+}
+.contact-review-card summary { cursor: pointer; font-weight: 750; }
+.contact-review-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+}
+.contact-review-grid span { display: grid; gap: 3px; }
+.contact-review-grid small { color: var(--muted); }
+.contact-review-grid b { overflow-wrap: anywhere; }
+.contact-source-excerpt {
+  margin: 12px 0;
+  border-left: 3px solid var(--accent);
+  padding-left: 10px;
+  color: var(--muted);
+}
+.contact-review-links { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+@media (max-width: 760px) {
+  .contact-review-grid { grid-template-columns: 1fr; }
+}
+
 .research-stage {
   display: flex;
   gap: var(--s3);

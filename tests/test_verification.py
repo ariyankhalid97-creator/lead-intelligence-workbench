@@ -1,3 +1,4 @@
+import io
 import json
 import tempfile
 import threading
@@ -8,6 +9,74 @@ from unittest.mock import patch
 import engine
 import verification
 import browser_session
+import contacts
+
+
+class MailDomainStatusTests(unittest.TestCase):
+    def setUp(self):
+        cache = patch.object(contacts, "MAIL_DNS_CACHE", {})
+        cache.start()
+        self.addCleanup(cache.stop)
+        dns = patch.object(contacts, "urlopen")
+        self.urlopen = dns.start()
+        self.addCleanup(dns.stop)
+
+    def response(self, status, answers=(), truncated=False):
+        return io.BytesIO(
+            json.dumps({
+                "Status": status,
+                "TC": truncated,
+                "Answer": [{"type": kind, "data": value} for kind, value in answers],
+            }).encode()
+        )
+
+    def test_null_mx_and_nxdomain_never_fall_back_to_host_addresses(self):
+        self.urlopen.side_effect = [self.response(0, [(15, "0 .")]), self.response(3)]
+
+        self.assertEqual("null_mx", contacts.mail_domain_status("no-mail.test")["status"])
+        self.assertEqual("no_mail_route_observed", contacts.mail_domain_status("missing.test")["status"])
+        self.assertEqual("null_mx", contacts.mail_domain_status("no-mail.test")["status"])
+        self.assertEqual(2, self.urlopen.call_count)
+
+    def test_fallback_checks_ipv6_before_declaring_a_domain_unroutable(self):
+        self.urlopen.side_effect = [
+            self.response(0),
+            self.response(0),
+            self.response(0, [(28, "2001:db8::1")]),
+            self.response(0),
+            self.response(0),
+            self.response(0),
+        ]
+
+        result = contacts.mail_domain_status("ipv6.test")
+        self.assertEqual("a_fallback_present", result["status"])
+        self.assertEqual(["2001:db8::1"], result["address_fallback"])
+        result = contacts.mail_domain_status("no-route.test")
+        self.assertEqual("no_mail_route_observed", result["status"])
+        self.assertEqual(
+            ["MX", "A", "AAAA"] * 2,
+            [call.args[0].full_url.split("type=")[-1] for call in self.urlopen.call_args_list],
+        )
+
+    def test_transient_lookup_failures_do_not_poison_later_checks(self):
+        self.urlopen.side_effect = [
+            self.response(2),
+            self.response(0, truncated=True),
+            TimeoutError(),
+            self.response(0, [(15, "10 mx.example.test.")]),
+        ]
+        for _ in range(3):
+            self.assertEqual(
+                "temporary_dns_unavailable",
+                contacts.mail_domain_status("retry.test")["status"],
+            )
+        self.assertEqual("mx_present", contacts.mail_domain_status("retry.test")["status"])
+
+    def test_transient_fallback_is_distinct_from_missing_addresses(self):
+        self.urlopen.side_effect = [self.response(0), self.response(5), self.response(0)]
+
+        result = contacts.mail_domain_status("unresolved.test")
+        self.assertEqual("temporary_dns_unavailable", result["status"])
 
 
 class VerificationTests(unittest.TestCase):

@@ -7,6 +7,7 @@ from unittest.mock import patch
 import engine
 import intelligence
 import research_packs
+import sequence_engine
 from leadfinder import Lead
 
 
@@ -103,13 +104,35 @@ class IntelligenceTests(unittest.TestCase):
             }
         )
         self.assertFalse(intelligence.preflight(row, row["email"])["eligible"])
-        self.assertEqual("suppress", intelligence.queue()[0]["action"])
+        self.assertEqual("contact_discovery", intelligence.queue()[0]["action"])
         with engine.connection() as conn:
             self.assertIsNotNone(
                 conn.execute(
                     "SELECT 1 FROM outreach_suppressions WHERE email=?", (row["email"],)
                 ).fetchone()
             )
+
+    def test_shared_domain_keeps_branches_separate_under_one_parent_brand(self):
+        dallas = self.job()
+        intelligence.compile_job(dallas)
+        houston = self.job(phone="713-555-0100")
+        houston["params"]["location"] = "Houston, Texas"
+        houston["rows"][0].update(city="Houston", address="9 Bayou St")
+        intelligence.compile_job(houston)
+        left, right = dallas["rows"][0], houston["rows"][0]
+        self.assertNotEqual(left["entity_id"], right["entity_id"])
+        self.assertNotEqual(left["operating_entity_id"], right["operating_entity_id"])
+        self.assertEqual(left["parent_brand_id"], right["parent_brand_id"])
+
+    def test_mailbox_bounce_halts_only_that_sequence(self):
+        sequence_engine.create("followup", [{"delay_days": 0, "subject": "Hello", "body": "Body"}])
+        first = sequence_engine.enroll("followup", "c1", "company", "branch-1", "first@example.com")
+        second = sequence_engine.enroll("followup", "c1", "company", "branch-2", "second@example.com")
+        self.assertEqual(1, sequence_engine.apply_outcome("company", "first@example.com", "bounced"))
+        with engine.connection() as conn:
+            states = dict(conn.execute("SELECT id,state FROM outreach_sequence_states"))
+        self.assertEqual("halted", states[first])
+        self.assertEqual("scheduled", states[second])
 
     def test_niche_pack_is_editable_and_bounded(self):
         slug = intelligence.save_niche_pack(

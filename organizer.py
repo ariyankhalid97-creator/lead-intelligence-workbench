@@ -9,9 +9,14 @@ from urllib.parse import urlparse
 import leadfinder as lf
 import local_ai
 
-AUTOMATED = {"noreply", "no-reply", "donotreply", "do-not-reply", "mailer-daemon", "postmaster", "webmaster", "bot", "automated", "notifications", "notification", "system"}
-SUPPORT = {"support", "help", "helpdesk", "customerservice", "customer-service", "care", "abuse", "privacy", "legal", "security", "complaints"}
+AUTOMATED = {"noreply", "donotreply", "mailerdaemon", "postmaster", "webmaster", "bot", "automated", "notifications", "notification", "system"}
+SUPPORT = {
+    "support", "help", "helpdesk", "helpcenter", "customerservice", "customercare",
+    "customersupport", "techsupport", "technicalsupport", "supportteam", "supportdesk",
+    "care", "abuse", "privacy", "legal", "security", "complaints",
+}
 GENERAL = {"info", "hello", "contact", "office", "sales", "admin", "booking", "bookings", "quote", "quotes", "estimate", "estimates", "team", "reception", "inquiries", "enquiries"}
+UNSENDABLE_MAIL_DOMAIN_STATUSES = frozenset({"invalid_domain", "null_mx", "no_mail_route_observed"})
 
 
 def _emails(row):
@@ -28,18 +33,26 @@ def _emails(row):
     return list(dict.fromkeys(value.casefold() for value in values))
 
 
-def classify_email(address, decision_maker="", domain_check=None):
-    if not lf.EMAIL_RE.fullmatch(str(address).strip()):
+def classify_email(address, decision_maker="", domain_check=None, evidence=None):
+    address = str(address).strip().casefold()
+    if not lf.EMAIL_RE.fullmatch(address):
         return {"email": address, "type": "invalid", "recommended": False, "basis": "syntax_check", "deliverability": "not_tested"}
-    address = address.casefold()
     local = address.split("@", 1)[0]
-    compact = re.sub(r"[^a-z0-9]", "", local)
+    mailbox = local.split("+", 1)[0]
+    role_tokens = re.findall(r"[a-z0-9]+", mailbox)
+    compact = "".join(role_tokens)
     tokens = {x for x in re.split(r"[._+\-]+", local) if x}
     name_tokens = {x for x in re.findall(r"[a-z]+", decision_maker.casefold()) if len(x) > 1}
-    if local in AUTOMATED or compact in {re.sub(r"\W", "", x) for x in AUTOMATED}:
+    evidence = evidence or {}
+    purpose = str(evidence.get("contact_type") or "").casefold()
+    purpose_compact = re.sub(r"[^a-z]", "", purpose)
+    named_together = bool(evidence.get("contact_name") and evidence.get("contact_role"))
+    if compact in AUTOMATED:
         kind, recommended, basis = "automated", False, "known_automated_local_part"
-    elif local in SUPPORT or compact in {re.sub(r"\W", "", x) for x in SUPPORT}:
-        kind, recommended, basis = "support", False, "known_support_local_part"
+    elif compact in SUPPORT or "support" in role_tokens or purpose_compact in SUPPORT or any(term in purpose for term in ("customer service", "customer support", "technical support", "complaint", "privacy", "legal")):
+        kind, recommended, basis = "support", False, "published_contact_purpose_is_support"
+    elif named_together:
+        kind, recommended, basis = "possible_direct", True, "email_name_and_role_published_together"
     elif local in GENERAL:
         kind, recommended, basis = "general_business", True, "known_general_business_local_part"
     elif name_tokens and tokens & name_tokens:
@@ -49,7 +62,7 @@ def classify_email(address, decision_maker="", domain_check=None):
     else:
         kind, recommended, basis = "uncertain", True, "published_valid_address_not_known_support_or_automated"
     status = (domain_check or {}).get("status", "not_checked")
-    if status in {"invalid_domain", "null_mx", "no_mail_route_observed"}:
+    if status in UNSENDABLE_MAIL_DOMAIN_STATUSES:
         kind, recommended, basis = "unsendable_domain", False, "mail_domain_has_no_usable_mx"
         deliverability = "domain_unsendable"
     elif status in {"mx_present", "a_fallback_present"}:
@@ -58,7 +71,42 @@ def classify_email(address, decision_maker="", domain_check=None):
         deliverability = "domain_check_temporary_failure"
     else:
         deliverability = "not_tested"
-    return {"email": address, "type": kind, "recommended": recommended, "basis": basis, "deliverability": deliverability, "domain_status": status}
+    return {
+        "email": address,
+        "type": kind,
+        "recommended": recommended,
+        "basis": basis,
+        "deliverability": deliverability,
+        "domain_status": status,
+        "published": bool(evidence),
+        "source_url": str(evidence.get("url") or "")[:1500],
+        "source_excerpt": str(evidence.get("excerpt") or "")[:500],
+        "contact_type": str(evidence.get("contact_type") or "")[:100],
+        "contact_name": str(evidence.get("contact_name") or "")[:160],
+        "contact_role": str(evidence.get("contact_role") or "")[:120],
+        "observed_at": str(evidence.get("observed_at") or "")[:80],
+        "mailbox_status": "not_checked",
+    }
+
+
+def _published_email_evidence(row):
+    try:
+        evidence = json.loads(row.get("evidence") or "[]")
+    except (ValueError, TypeError):
+        evidence = []
+    result = {}
+    for item in evidence if isinstance(evidence, list) else []:
+        if not isinstance(item, dict) or item.get("field") != "email":
+            continue
+        address = str(item.get("value") or "").casefold()
+        if not lf.EMAIL_RE.fullmatch(address):
+            continue
+        current = result.get(address)
+        score = sum(bool(item.get(key)) for key in ("contact_name", "contact_role", "contact_type", "excerpt"))
+        old_score = sum(bool((current or {}).get(key)) for key in ("contact_name", "contact_role", "contact_type", "excerpt"))
+        if current is None or score > old_score:
+            result[address] = item
+    return result
 
 
 def inferred_permutations(row, published):
@@ -146,7 +194,8 @@ def organize_rows(rows, cancel=None):
         except (TypeError, ValueError):
             verification = {}
         domain_checks = {item.get("email", "").casefold(): item for item in verification.get("email_candidates", []) if isinstance(item, dict)}
-        candidates = [classify_email(value, row.get("decision_maker", ""), domain_checks.get(value.casefold())) for value in _emails(row)]
+        published = _published_email_evidence(row)
+        candidates = [classify_email(value, row.get("decision_maker", ""), domain_checks.get(value.casefold()), published.get(value.casefold())) for value in _emails(row)]
         candidates.extend(inferred_permutations(row, [item["email"] for item in candidates]))
         candidates.sort(key=lambda item: ({"possible_direct": 0, "general_business": 1, "uncertain": 2, "support": 3, "automated": 4, "invalid": 5}.get(item["type"], 6), item["email"]))
         usable = [item for item in candidates if item["recommended"]]
@@ -155,7 +204,20 @@ def organize_rows(rows, cancel=None):
             for item in candidates:
                 if item["type"] == "uncertain":
                     ambiguous.append({"row": index, "email": item["email"], "local_part": item["email"].split("@", 1)[0], "business": str(row.get("name", ""))[:100]})
-        row["email_quality"] = json.dumps({"recommended": [item for item in candidates if item["recommended"]], "excluded": [item for item in candidates if not item["recommended"]], "note": "Published-address classification only; mailbox deliverability was not tested.", "ai_status": "not_requested"}, ensure_ascii=False)
+        excluded = [item for item in candidates if not item["recommended"]]
+        row["email_quality"] = json.dumps({
+            "recommended": usable,
+            "excluded": excluded,
+            "best_sourced_alternative": usable[0] if usable else None,
+            "primary_block_reason": excluded[0].get("basis", "") if excluded and not usable else "",
+            "states": {
+                "published": bool(usable and usable[0].get("published")),
+                "domain_accepts_mail": bool(usable and usable[0].get("domain_status") in {"mx_present", "a_fallback_present"}),
+                "mailbox_checked": bool(usable and usable[0].get("mailbox_status") not in {"", "not_checked"}),
+            },
+            "note": "Published, domain-routing and mailbox-level states are separate. SMTP mailbox probing is not performed.",
+            "ai_status": "not_requested",
+        }, ensure_ascii=False)
 
     if ambiguous and not (cancel and cancel.is_set()):
         status = local_ai.status()

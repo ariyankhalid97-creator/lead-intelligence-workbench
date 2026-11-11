@@ -1,7 +1,7 @@
 {
   "name": "lead-extractor-desktop",
   "productName": "Lead Extractor",
-  "version": "2.6.0",
+  "version": "2.7.0",
   "description": "Local-first lead research, verification, intelligence, and approval-gated outreach desktop workspace",
   "author": "ariyankhalid97-creator",
   "license": "MIT",
@@ -36,6 +36,10 @@
           "schemas/**/*",
           "requirements.txt"
         ]
+      },
+      {
+        "from": "build/backend-version.json",
+        "to": "backend/version.json"
       }
     ],
     "win": {

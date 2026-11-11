@@ -9,10 +9,11 @@ const path = require("path");
   const testProfile = fs.mkdtempSync(
     path.join(os.tmpdir(), "lead-extractor-smoke-"),
   );
+  const smokePort = String(18000 + (process.pid % 1000));
   const app = await electron.launch({
     args: [root, `--user-data-dir=${testProfile}`],
     cwd: root,
-    env: { ...process.env, LEAD_EXTRACTOR_PORT: "18788" },
+    env: { ...process.env, LEAD_EXTRACTOR_PORT: smokePort },
   });
   try {
     const page = await app.firstWindow();
@@ -46,8 +47,8 @@ const path = require("path");
         document.querySelectorAll("#connectionCards .connection-card")
           .length === 5,
     );
-    await page.locator('nav a[href="#sources"]').click();
-    await page.waitForFunction(() => location.hash === "#sources");
+    await page.locator('nav a[href="#settings"]').click();
+    await page.waitForFunction(() => location.hash === "#settings");
     await page.waitForFunction(
       () =>
         document.querySelectorAll("#sourceCards .source-card").length === 14,
@@ -77,7 +78,7 @@ const path = require("path");
       await page.locator("#connectionsPanel").getAttribute("open"),
       "",
     );
-    await page.locator('nav a[href="#registries"]').click();
+    await page.evaluate(() => { location.hash = "#registries"; });
     await page.waitForFunction(() => location.hash === "#registries");
     await page.waitForFunction(
       () =>
@@ -151,8 +152,8 @@ const path = require("path");
     await page.locator("#menuDensityToggle").click();
 
     const startingHash = await page.evaluate(() => location.hash);
-    await page.locator('nav a[href="#history"]').click();
-    await page.waitForFunction(() => location.hash === "#history");
+    await page.locator('nav a[href="#runs"]').click();
+    await page.waitForFunction(() => location.hash === "#runs");
     await page.locator("#windowBack").click();
     await page.waitForFunction((hash) => location.hash === hash, startingHash);
 

@@ -37,17 +37,17 @@
           </svg>
           <span>Discover businesses</span>
         </a>
-        <a href="#history" aria-label="Search history" title="Search history">
+        <a href="#runs" aria-label="Runs · Search history" title="Runs">
           <svg viewBox="0 0 24 24" aria-hidden="true">
             <circle cx="12" cy="12" r="8.4" />
             <path d="M12 7.6V12l3 1.8" />
           </svg>
-          <span>Search history</span><b id="historyBadge">0</b>
+          <span>Runs</span><b id="historyBadge">0</b>
         </a>
         <a
-          href="#library"
-          aria-label="Your research library"
-          title="Your research library"
+          href="#review"
+          aria-label="Leads and review"
+          title="Leads and review"
         >
           <svg viewBox="0 0 24 24" aria-hidden="true">
             <path d="M4.5 6.5h6v13h-6z" />
@@ -55,38 +55,27 @@
             <path d="M4.5 6.5 7.5 4h6v2.5" />
             <path d="M13.5 6.5 16.5 4h3v2.5" />
           </svg>
-          <span>Your research library</span>
+          <span>Leads &amp; Review</span>
         </a>
         <a
-          href="#outreach"
-          aria-label="Outreach campaigns"
-          title="Outreach campaigns"
+          href="#followup"
+          aria-label="Follow-up"
+          title="Follow-up"
         >
           <svg viewBox="0 0 24 24" aria-hidden="true">
             <path d="M20 4 3.5 10.6l6.2 2.3L20 4Z" />
             <path d="M20 4 11.8 19.6l-.9-6.4L20 4Z" />
           </svg>
-          <span>Outreach campaigns</span
+          <span>Follow-up</span
           ><b id="outreachBadge" class="hidden">0</b>
         </a>
-        <a href="#sources" aria-label="Data sources" title="Data sources">
+        <a href="#settings" aria-label="Settings · Data sources" title="Settings">
           <svg viewBox="0 0 24 24" aria-hidden="true">
             <ellipse cx="12" cy="6" rx="7.5" ry="2.8" />
             <path d="M4.5 6v6c0 1.6 3.4 2.8 7.5 2.8s7.5-1.2 7.5-2.8V6" />
             <path d="M4.5 12v6c0 1.6 3.4 2.8 7.5 2.8s7.5-1.2 7.5-2.8v-6" />
           </svg>
-          <span>Data sources</span>
-        </a>
-        <a
-          href="#registries"
-          aria-label="Business registries"
-          title="Business registries"
-        >
-          <svg viewBox="0 0 24 24" aria-hidden="true">
-            <path d="M4 20h16M6 20V9h12v11M9 12h2m2 0h2m-6 4h2m2 0h2" />
-            <path d="m5 9 7-5 7 5" />
-          </svg>
-          <span>Business registries</span>
+          <span>Settings</span>
         </a>
       </nav>
       <button id="navNewCampaign" class="nav-cta" type="button">
@@ -95,7 +84,7 @@
       <div class="sidebar-bottom">
         <span class="local-dot"></span> Running on your computer
         <p>Your searches and results stay in this workspace.</p>
-        <span class="version">LOCAL EDITION / 2.4</span>
+        <span class="version" id="workspaceVersion">LOCAL EDITION</span>
       </div>
     </aside>
     <main>
@@ -348,15 +337,15 @@ Dallas, Texas</textarea>
                 ></label
               >
             </div>
-            <div class="check-row">
-              <input id="continuePrevious" type="checkbox" checked /><label
-                for="continuePrevious"
-                >Continue after earlier batches<small
-                  >Repeated searches skip businesses already collected for the
-                  same niche and locations, then keep scanning for the next
-                  batch. Turn this off only to refresh earlier leads.</small
-                ></label
-              >
+            <div class="search-mode-choice">
+              <label for="searchMode">Search mode</label>
+              <select id="searchMode">
+                <option value="new">Find new businesses</option>
+                <option value="refresh">Refresh saved businesses</option>
+              </select>
+              <small>New skips earlier results in the same scope. Refresh revisits saved businesses and updates their evidence.</small>
+              <label class="sr-only" for="continuePrevious">Continue after earlier batches</label>
+              <input id="continuePrevious" class="sr-only" type="checkbox" checked tabindex="-1" />
             </div>
             <div class="check-row linked-workflow-choice">
               <input id="linkedWorkflow" type="checkbox" checked /><label
@@ -369,7 +358,16 @@ Dallas, Texas</textarea>
               >
             </div>
             <details class="advanced">
-              <summary>Search phrases & website input</summary>
+              <summary>Advanced search, presets & sources</summary>
+              <div class="preset-controls">
+                <label for="searchPreset">Reusable search preset</label>
+                <select id="searchPreset"><option value="">No preset selected</option></select>
+                <input id="presetName" maxlength="120" placeholder="Preset name, e.g. Dallas property managers" />
+                <input id="presetTargetRole" maxlength="300" placeholder="Target role, e.g. owner, operations director" />
+                <textarea id="presetExclusions" rows="2" placeholder="Exclusions, one per line"></textarea>
+                <button id="saveSearchPreset" class="ghost small" type="button">Save current search as preset</button>
+                <p id="presetStatus" class="fine-print" role="status"></p>
+              </div>
               <label for="phrases"
                 >Additional phrases <span>One per line</span></label
               ><textarea
@@ -384,6 +382,7 @@ Dallas, Texas</textarea>
                 rows="3"
                 placeholder="https://business-website.com"
               ></textarea>
+              <p class="fine-print"><a href="#sources">Configure data sources</a> · <a href="#registries">Browse country and niche registries</a></p>
             </details>
             <button id="runButton" class="primary" type="submit">
               Find businesses <span>→</span>
@@ -960,6 +959,31 @@ Dallas, Texas</textarea>
           <div id="libraryList" class="library-list"></div>
         </div>
       </section>
+      <section id="reviewView" class="view hidden">
+        <div class="page-heading review-heading">
+          <div>
+            <div class="eyebrow">DAILY LEAD REVIEW</div>
+            <h1>Decide what is true, useful and ready.</h1>
+            <p>Review the business, branch, contact and evidence in one place. Address quality, contact approval and permission to send remain separate decisions.</p>
+          </div>
+          <div class="heading-note"><b>Keyboard friendly</b><span>Use ↑ and ↓ to move through leads.<br />Enter opens the selected lead.</span></div>
+        </div>
+        <div class="review-toolbar card">
+          <input id="reviewSearch" type="search" placeholder="Search business, city, niche or next action…" aria-label="Search review queue" />
+          <select id="reviewAction" aria-label="Filter by next action"><option value="">All next actions</option><option value="verify_public_sources">Verify sources</option><option value="contact_discovery">Find contact</option><option value="decision_maker_verification">Review decision maker</option><option value="ready_for_outreach">Ready for follow-up</option><option value="suppress">Suppressed</option></select>
+          <select id="reviewDecision" aria-label="Filter by review decision"><option value="">All review states</option><option value="pending">Pending</option><option value="confirmed">Confirmed</option><option value="deferred">Deferred</option><option value="rejected">Rejected</option></select>
+          <button id="refreshReview" class="secondary" type="button">Refresh</button>
+        </div>
+        <div class="review-workspace">
+          <section class="card review-list-panel" aria-label="Lead review queue">
+            <div class="review-list-heading"><b id="reviewCount">0 leads</b><small>Highest priority first</small></div>
+            <div id="reviewLeadList" class="review-lead-list" role="listbox" tabindex="0"></div>
+          </section>
+          <section class="card review-detail-panel" aria-live="polite">
+            <div id="reviewDetail" class="review-empty"><h2>Select a lead</h2><p>Its branch identity, contacts, evidence and activity will appear here.</p></div>
+          </section>
+        </div>
+      </section>
       <section id="outreachView" class="view hidden">
         <div class="page-heading outreach-heading">
           <div>
@@ -972,13 +996,25 @@ Dallas, Texas</textarea>
             </p>
           </div>
           <div class="heading-note outreach-note">
-            <b>Multi-campaign</b>
+            <b>Manual-first outreach</b>
             <span
-              >Run up to five campaigns at once.<br />60–120 s pacing per
-              message.</span
+              >Research and draft in batches.<br />Zoho sends only one reviewed,
+              permitted message at a time.</span
             >
           </div>
         </div>
+
+        <details class="card followup-task-card" open>
+          <summary><b>Manual follow-up tasks</b></summary>
+          <form id="followupTaskForm" class="followup-task-form">
+            <input id="followupTaskTitle" maxlength="240" required placeholder="e.g. Call the published business number" aria-label="Follow-up task" />
+            <input id="followupTaskDue" type="date" aria-label="Follow-up due date" />
+            <input id="followupTaskNote" maxlength="1000" placeholder="Evidence-backed note (optional)" aria-label="Follow-up note" />
+            <button class="secondary" type="submit">Add task</button>
+          </form>
+          <p id="followupTaskStatus" role="status"></p>
+          <div id="followupTaskList" class="followup-task-list"></div>
+        </details>
 
         <div class="outreach-statusbar">
           <span id="zohoStatus" class="status-chip is-warn" role="status"
@@ -1046,6 +1082,25 @@ Dallas, Texas</textarea>
             The client secret and refresh token are stored in Windows Credential
             Manager, not in lead files or diagnostics. The popup requests only
             account lookup and email creation.
+          </p>
+        </details>
+
+        <details class="card zoho-connect-card" id="bounceImportCard">
+          <summary><b>Import a delivery notice (.eml)</b></summary>
+          <p>
+            Import a bounce downloaded from your inbox. The app matches it to
+            a previously sent recipient. Only a confirmed <code>5.1.1</code>
+            mailbox-not-found notice suppresses an address automatically.
+          </p>
+          <form id="bounceImportForm" class="zoho-connect-form">
+            <label for="bounceEmlFile">Delivery notice</label>
+            <input id="bounceEmlFile" type="file" accept=".eml,message/rfc822" required />
+            <button class="secondary" type="submit">Review delivery notice</button>
+          </form>
+          <p id="bounceImportStatus" role="status"></p>
+          <p class="fine-print">
+            Files stay on this computer. Temporary failures and policy rejections
+            go to review and do not create automatic suppression.
           </p>
         </details>
 
@@ -1203,6 +1258,12 @@ Dallas, Texas</textarea>
 
             <div class="two-col">
               <div>
+                <label for="campaignProvider">Delivery provider</label>
+                <select id="campaignProvider">
+                  <option value="zoho">Zoho Mail</option>
+                </select>
+              </div>
+              <div>
                 <label for="campaignScope">Recipients</label
                 ><select id="campaignScope">
                   <option value="matches">Service/category matches</option>
@@ -1267,9 +1328,9 @@ Dallas, Texas</textarea>
                 </li>
               </ol>
               <ul class="compose-facts">
-                <li><b>20</b><span>recipients max per campaign</span></li>
-                <li><b>60–120 s</b><span>pacing between messages</span></li>
-                <li><b>5</b><span>campaigns can send at once</span></li>
+                <li><b>20</b><span>review drafts per pack</span></li>
+                <li><b>1</b><span>permitted Zoho message at a time</span></li>
+                <li><b>Manual</b><span>follow-up for draft packs</span></li>
                 <li><b>0</b><span>messages sent automatically</span></li>
               </ul>
             </div>
@@ -1593,18 +1654,18 @@ Dallas, Texas</textarea>
               <span class="step">03</span>
               <div>
                 <h3 id="employeeDiscoveryHeading">
-                  LinkedIn employee worksheet
+                  LinkedIn decision-maker review queue
                 </h3>
                 <p>
-                  After company LinkedIn URLs are verified, inspect their
-                  visible People pages and save sourced professional profile
-                  links in a separate Google Sheets worksheet.
+                  Start with names and roles published on each company’s own
+                  website, then review LinkedIn manually with Current company
+                  and Locations filters. No LinkedIn profiles are collected automatically.
                 </p>
               </div>
             </div>
             <div class="employee-discovery-controls">
               <label for="employeeCompanyLimit"
-                >Companies to check<input
+                >Companies to prepare<input
                   id="employeeCompanyLimit"
                   type="number"
                   min="1"
@@ -1612,7 +1673,7 @@ Dallas, Texas</textarea>
                   value="100"
               /></label>
               <label for="employeePerCompany"
-                >Visible profiles per company<input
+                >Review tasks per company<input
                   id="employeePerCompany"
                   type="number"
                   min="1"
@@ -1620,14 +1681,14 @@ Dallas, Texas</textarea>
                   value="100"
               /></label>
               <button id="startEmployeeDiscovery" class="primary" type="button">
-                Build employee worksheet
+                Build review worksheet
               </button>
               <button
                 id="resumeEmployeeDiscovery"
                 class="secondary hidden"
                 type="button"
               >
-                Continue after browser check
+                Continue review preparation
               </button>
               <button
                 id="cancelEmployeeDiscovery"
@@ -1638,8 +1699,7 @@ Dallas, Texas</textarea>
               </button>
             </div>
             <p id="employeeDiscoveryStatus" class="notice" role="status">
-              Complete second-round verification first so company LinkedIn URLs
-              are available.
+              Complete website verification first so company evidence is available.
             </p>
             <progress
               id="employeeDiscoveryProgress"
@@ -1653,10 +1713,9 @@ Dallas, Texas</textarea>
               class="employee-profile-preview"
             ></div>
             <p class="fine-print">
-              Uses the dedicated Chrome profile you signed into. It stores only
-              visible names, headlines, profile URLs, company evidence and
-              observation time. It does not open private data, send invitations,
-              message people, or bypass LinkedIn checkpoints.
+              Each task opens LinkedIn for your manual review. Accept a person
+              only after Current company and location agree with the saved
+              company evidence. The app does not automate LinkedIn People pages.
             </p>
           </section>
           <details class="verification-results-details">
